@@ -11,6 +11,8 @@ two voices.
 
 ## Features
 
+- Import plain text, Markdown or EPUB sources (EPUB metadata and chapter
+  boundaries are detected automatically).
 - Split a source text into chapters using configurable heading patterns.
 - Synthesize chapters one at a time with tiny-voca (`F2` / `M2`, speed and
   pitch controls), writing one WAV per chapter.
@@ -63,6 +65,28 @@ remove the `[[tool.uv.index]]` and `[tool.uv.sources]` sections in `pyproject.to
 > spellings are often mispronounced. See the
 > [tiny-voca README](https://github.com/n4ze3m/tiny-voca) for details.
 
+## Source formats
+
+| Extension | Reader | Notes |
+| --- | --- | --- |
+| `.txt`, `.md` | UTF-8 plain text | Chapters come from the heading regex. |
+| `.epub` | built-in, standard library only | Title/author and reading order come from EPUB metadata; no extra dependency. |
+
+EPUB documents are read in spine order. If the book contains "Chapter One"-style
+headings they are used as chapters; otherwise each EPUB document becomes a
+chapter, using its first `<h1>` as the title. The source file is copied into
+the project, so generated projects are self-contained:
+
+```bash
+# --title / --author are optional for EPUB: metadata is used when omitted.
+uv run audiobook-creator init --source book.epub --dir my-book
+uv run audiobook-creator status --config my-book/book.toml
+```
+
+Scanned/image PDFs and other formats are not supported yet; convert them to
+text first (or ask for PDF support, which would need an optional extraction
+dependency).
+
 ## Quickstart
 
 ```bash
@@ -95,7 +119,7 @@ uv run audiobook-creator assemble --config my-book/book.toml
 
 | Command | Purpose |
 | --- | --- |
-| `init` | Create a project directory, config, manifest and directories. Accepts all the flags below. |
+| `init` | Create a project directory, config, manifest and directories. Reads EPUB title/author when `--title`/`--author` are omitted. |
 | `config` | Print effective settings, or persist changes to `book.toml`. |
 | `synthesize` | Synthesize pending chapters. `--force`, `--only N [N...]`, plus voice/engine flags. |
 | `status` | Show per-chapter progress, duration and the output split plan. |
@@ -122,7 +146,8 @@ tts-audiobook/
 ├── src/audiobook_creator/
 │   ├── cli.py                  # argparse CLI entry point
 │   ├── config.py               # book.toml data model + loader
-│   ├── book.py                 # source reading + chapter splitting
+│   ├── book.py                 # source dispatch + chapter splitting
+│   ├── epub.py                 # EPUB reader (stdlib zipfile/XML)
 │   ├── synthesis.py            # lazy tiny-voca wrapper
 │   ├── audio.py                # WAV I/O + final assembly
 │   └── manifest.py             # resumable progress (JSON)

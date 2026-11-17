@@ -8,7 +8,7 @@ from pathlib import Path
 
 from . import __version__
 from .audio import assemble, split_groups, write_wav
-from .book import read_source, split_chapters
+from .book import chapters_from_source, load_source
 from .config import (
     AudioSettings,
     CONFIG_FILENAME,
@@ -72,7 +72,7 @@ def build_parser() -> argparse.ArgumentParser:
     init = sub.add_parser("init", help="create a new audiobook project directory")
     init.add_argument("--dir", type=Path, default=Path("."), help="project directory")
     init.add_argument("--source", type=Path, required=True, help="source text file")
-    init.add_argument("--title", required=True, help="book title")
+    init.add_argument("--title", help="book title (default: EPUB metadata title)")
     init.add_argument("--author", default="", help="book author")
     init.add_argument("--force", action="store_true", help="overwrite existing config")
     _add_voice_flags(init)
@@ -226,14 +226,26 @@ def command_init(args: argparse.Namespace) -> int:
     if local_source.resolve() != source:
         local_source.write_bytes(source.read_bytes())
 
+    # EPUB sources can supply the title and author from their metadata.
+    source_info = load_source(source)
+    title = args.title or source_info.title
+    author = args.author or source_info.author
+    if not title:
+        print("a title is required (--title, or EPUB metadata)", file=sys.stderr)
+        return 1
+    # Keep the resolved metadata values from being overwritten by empty
+    # argparse defaults in _apply_overrides.
+    args.title = title
+    args.author = author
+
     # If the checkpoint exists relative to the current directory, store an
     # absolute path so weights can live outside the project directory.
     checkpoint = Path(args.checkpoint).expanduser() if args.checkpoint else Path("weights/tiny-voca.pt")
     checkpoint_value = str(checkpoint.resolve()) if checkpoint.is_file() else str(checkpoint)
 
     settings = Settings(
-        title=args.title,
-        author=args.author or "",
+        title=title,
+        author=author,
         source=Path(local_source.name),
         chapter_pattern=getattr(args, "chapter_pattern", None) or Settings.chapter_pattern,
         checkpoint=Path(checkpoint_value),
@@ -246,7 +258,7 @@ def command_init(args: argparse.Namespace) -> int:
     config_path.write_text(render_settings(settings), encoding="utf-8")
     Manifest(title=settings.title).save(_manifest_path(config_path))
 
-    chapter_count = len(split_chapters(local_source.read_text(encoding="utf-8"), settings.chapter_pattern))
+    chapter_count = len(chapters_from_source(source_info, settings.chapter_pattern))
     print(f"Created project at {project}")
     print(f"Output plan: {_describe_plan(settings, chapter_count)}")
     print("Next: set up the engine (scripts/setup.sh), then:")
@@ -263,7 +275,7 @@ def command_config(args: argparse.Namespace) -> int:
         print(f"Updated {config_path}")
 
     try:
-        chapters = split_chapters(read_source(settings.source), settings.chapter_pattern)
+        chapters = chapters_from_source(load_source(settings.source), settings.chapter_pattern)
     except FileNotFoundError:
         chapters = []
     print(f"Title: {settings.title}  Author: {settings.author or '-'}")
@@ -293,7 +305,7 @@ def command_synthesize(args: argparse.Namespace) -> int:
     settings, config_path = load_settings(args.config)
     _apply_overrides(settings, args)
     settings.validate()
-    chapters = split_chapters(read_source(settings.source), settings.chapter_pattern)
+    chapters = chapters_from_source(load_source(settings.source), settings.chapter_pattern)
     if not chapters:
         print("No chapters found in the source text.", file=sys.stderr)
         return 1
@@ -370,7 +382,7 @@ def command_assemble(args: argparse.Namespace) -> int:
         destination = _destination_for(settings, label, numbers)
         try:
             assemble([path for _number, path in group], destination, settings.audio)
-        except (ValueError, RuntimeError) as exc:
+        except (ValueError, RuntimeError, OSError) as exc:
             print(f"Assembly failed: {exc}", file=sys.stderr)
             return 1
         chapter_note = f"chapters {numbers[0]}-{numbers[1]}" if numbers else f"all {len(group)} chapters"
@@ -382,7 +394,7 @@ def command_assemble(args: argparse.Namespace) -> int:
 
 def command_status(args: argparse.Namespace) -> int:
     settings, config_path = load_settings(args.config)
-    chapters = split_chapters(read_source(settings.source), settings.chapter_pattern)
+    chapters = chapters_from_source(load_source(settings.source), settings.chapter_pattern)
     manifest = Manifest.load(_manifest_path(config_path), settings.title)
     manifest.sync(chapters)
     manifest.save(_manifest_path(config_path))
