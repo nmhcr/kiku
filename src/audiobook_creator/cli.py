@@ -138,7 +138,12 @@ def command_synthesize(args: argparse.Namespace) -> int:
             manifest.mark_failed(chapter.number)
             failed += 1
             continue
-        manifest.mark_done(chapter.number, filename, duration)
+        # Store the path relative to the project so assembly can find it.
+        try:
+            stored_path = str(target.relative_to(config_path.parent))
+        except ValueError:  # audio_dir lies outside the project directory
+            stored_path = str(target)
+        manifest.mark_done(chapter.number, stored_path, duration)
         print(f"  [{chapter.number:>3}] {chapter.title!r} -> {target.name} ({duration:.1f}s)")
 
     manifest.save(_manifest_path(config_path))
@@ -157,7 +162,7 @@ def command_assemble(args: argparse.Namespace) -> int:
             settings.output = settings.output.with_suffix(".mp3")
 
     manifest = Manifest.load(_manifest_path(config_path), settings.title)
-    files = manifest.completed_files(_project_root(config_path))
+    files = manifest.completed_files(_project_root(config_path), settings.audio_dir)
     if not files:
         print("No synthesized chapters found. Run 'synthesize' first.", file=sys.stderr)
         return 1

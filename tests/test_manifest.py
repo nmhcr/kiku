@@ -31,6 +31,31 @@ class ManifestTest(unittest.TestCase):
             self.assertTrue(loaded.is_done(2))
             self.assertEqual(loaded.completed_files(Path(tmp)), [Path(tmp) / "audio/chapter_0002.wav"])
 
+    def test_bare_filenames_resolve_against_audio_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            audio_dir = base / "audio"
+            audio_dir.mkdir()
+            (audio_dir / "chapter_0001.wav").write_bytes(b"x")
+            manifest = Manifest(title="Book")
+            manifest.sync(self.chapters)
+            manifest.mark_done(1, "chapter_0001.wav", 1.0)
+            self.assertEqual(
+                manifest.completed_files(base, audio_dir),
+                [audio_dir / "chapter_0001.wav"],
+            )
+
+    def test_root_relative_paths_are_used_when_present(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            clip = base / "audio" / "chapter_0001.wav"
+            clip.parent.mkdir()
+            clip.write_bytes(b"x")
+            manifest = Manifest(title="Book")
+            manifest.sync(self.chapters)
+            manifest.mark_done(1, str(clip.relative_to(base)), 1.0)
+            self.assertEqual(manifest.completed_files(base, base / "other"), [clip])
+
     def test_sync_keeps_status(self):
         manifest = Manifest(title="Book")
         manifest.sync(self.chapters)

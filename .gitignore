@@ -18,3 +18,7 @@ out/
 *.wav
 *.mp3
 .env
+book.toml
+manifest.json   
+sample-book.txt
+uv.lock

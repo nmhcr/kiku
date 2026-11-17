@@ -67,12 +67,28 @@ class Manifest:
                 return state
         raise KeyError(f"chapter {number} is not in the manifest")
 
-    def completed_files(self, base: Path) -> list[Path]:
+    def completed_files(self, base: Path, audio_dir: Path | None = None) -> list[Path]:
+        """Resolve completed clips to paths on disk.
+
+        Stored paths can be absolute, relative to the project root (e.g.
+        ``audio/chapter_0001.wav``) or bare filenames (older manifests, which
+        are resolved against ``audio_dir``).
+        """
         files: list[Path] = []
         for state in sorted(self.chapters, key=lambda c: c.number):
-            if state.status == "done" and state.file:
-                path = Path(state.file)
-                files.append(path if path.is_absolute() else base / path)
+            if state.status != "done" or not state.file:
+                continue
+            path = Path(state.file)
+            if path.is_absolute():
+                files.append(path)
+                continue
+            root_path = base / path
+            if root_path.is_file():
+                files.append(root_path)
+            elif audio_dir is not None:
+                files.append(audio_dir / path.name)
+            else:
+                files.append(root_path)
         return files
 
     @classmethod
