@@ -1,9 +1,14 @@
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from audiobook_creator.audio import split_groups
+import numpy as np
+import soundfile as sf
+
+from audiobook_creator.audio import assemble, split_groups, write_wav
 from audiobook_creator.cli import _destination_for
-from audiobook_creator.config import Settings
+from audiobook_creator.config import AudioSettings, Settings
 
 
 class SplitGroupsTest(unittest.TestCase):
@@ -99,6 +104,55 @@ class DestinationTest(unittest.TestCase):
             _destination_for(settings, "all", None),
             Path("out/My Book - all.mp3"),
         )
+
+
+class AssembleTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def clips(self, rate=24000):
+        first = self.root / "one.wav"
+        second = self.root / "two.wav"
+        write_wav(first, np.zeros(rate, dtype="float32"), rate)  # 1 second
+        write_wav(second, np.zeros(rate, dtype="float32"), rate)
+        return [first, second]
+
+    def test_streaming_length_and_gap(self):
+        clips = self.clips()
+        output = self.root / "book.wav"
+        assemble(clips, output, AudioSettings(chapter_gap_ms=500))
+        info = sf.info(str(output))
+        samples, rate = sf.read(str(output))
+        self.assertEqual(rate, 24000)
+        self.assertEqual(info.subtype, "PCM_16")
+        self.assertEqual(len(samples), 24000 + 12000 + 24000)
+
+    def test_zero_gap(self):
+        output = self.root / "book.wav"
+        assemble(self.clips(), output, AudioSettings(chapter_gap_ms=0))
+        samples, _rate = sf.read(str(output))
+        self.assertEqual(len(samples), 48000)
+
+    def test_sample_rate_mismatch_removes_partial_output(self):
+        clips = self.clips()
+        write_wav(clips[1], np.zeros(16000, dtype="float32"), 16000)
+        output = self.root / "book.wav"
+        with self.assertRaises(ValueError):
+            assemble(clips, output, AudioSettings())
+        self.assertFalse(output.exists())
+
+    def test_empty_clips(self):
+        with self.assertRaises(ValueError):
+            assemble([], self.root / "book.wav", AudioSettings())
+
+    def test_wav_size_guard(self):
+        with patch("audiobook_creator.audio._WAV_DATA_LIMIT", 1):
+            with self.assertRaises(ValueError):
+                assemble(self.clips(), self.root / "book.wav", AudioSettings())
 
 
 if __name__ == "__main__":
