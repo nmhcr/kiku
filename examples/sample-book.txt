@@ -1,0 +1,15 @@
+A short sample book for the audiobook creator scaffold. The text is split
+into chapters by headings such as "Chapter One". tiny-voca reads English only.
+
+Chapter One: The Beginning
+
+Hello! This is a tiny audiobook made with tiny-voca. Long text is fine: it is
+read one sentence at a time and the audio is joined together. Chapter headings
+like this one become separate audio files.
+
+Chapter Two: A Little More
+
+Each chapter can be synthesized on its own, so a long book does not have to be
+rendered in one go. Progress is saved in manifest.json, which means an
+interrupted run can be resumed without starting over. When every chapter is
+ready, the assemble command joins them into a single audiobook file.

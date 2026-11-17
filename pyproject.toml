@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tts-audiobook"
+version = "0.1.0"
+description = "Audiobook creator scaffold powered by tiny-voca"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Your Name" }]
+dependencies = [
+  "numpy>=1.24,<3",
+  "soundfile>=0.12,<1",
+]
+
+[project.optional-dependencies]
+# Installs the tiny-voca engine and its "own" phonemizer front end.
+# The weights and DIZIONE_DATA still need to be set up (see README / scripts/setup.sh).
+engine = [
+  "tiny-voca[own] @ git+https://github.com/n4ze3m/tiny-voca.git",
+]
+dev = [
+  "pytest>=7,<9",
+  "huggingface-hub>=0.34,<3",  # used by scripts/setup.sh to fetch the weights
+]
+
+[project.scripts]
+audiobook-creator = "audiobook_creator.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+audiobook_creator = ["py.typed"]
+
+# uv: use the CPU-only PyTorch build. The default PyPI wheel on Linux pulls
+# about 3 GB of CUDA libraries that this CPU-only project never uses.
+# Remove the two sections below if you deliberately want a CUDA build.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
