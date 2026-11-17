@@ -5,11 +5,25 @@ from __future__ import annotations
 import shutil
 import subprocess
 from pathlib import Path
+from typing import TypeVar
 
 import numpy as np
 import soundfile as sf
 
 from .config import AudioSettings
+
+T = TypeVar("T")
+
+
+def split_groups(items: list[T], size: int) -> list[list[T]]:
+    """Split ``items`` into consecutive groups of ``size``.
+
+    ``size <= 0`` means one group containing everything. The final group is
+    allowed to be shorter (77 items with size 10 -> 7 groups of 10 and one of 7).
+    """
+    if size <= 0:
+        return [list(items)]
+    return [items[index : index + size] for index in range(0, len(items), size)]
 
 
 def write_wav(path: str | Path, samples: np.ndarray, sample_rate: int) -> None:

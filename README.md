@@ -16,9 +16,10 @@ two voices.
   pitch controls), writing one WAV per chapter.
 - Resumable: progress is tracked in `manifest.json`; finished chapters are
   skipped on the next run.
-- Assemble chapters into a single WAV (or MP3 via ffmpeg), with configurable
-  gaps between chapters.
-- Config-driven (`book.toml`) with a small, documented CLI.
+- Assemble chapters into one audiobook or into groups of N chapters per file,
+  with configurable gaps between chapters and WAV/MP3 output.
+- Config-driven (`book.toml`) with a small, documented CLI that can also
+  read and write those settings.
 
 ## Install
 
@@ -72,7 +73,9 @@ uv run audiobook-creator init \
   --author "Me" \
   --dir my-book
 
-# 2. Edit my-book/book.toml (voice, speed, chapter pattern, paths, output format).
+# 2. Adjust settings by editing my-book/book.toml or from the CLI:
+uv run audiobook-creator config --config my-book/book.toml \
+  --voice F2 --speed 1.0 --chapter-gap-ms 700 --chapters-per-file all
 #    `init` stores an absolute checkpoint path if `weights/tiny-voca.pt` exists
 #    when you run it; otherwise adjust `engine.checkpoint` in the config.
 
@@ -92,11 +95,22 @@ uv run audiobook-creator assemble --config my-book/book.toml
 
 | Command | Purpose |
 | --- | --- |
-| `init` | Create a project directory, config, manifest and directories. |
-| `synthesize` | Synthesize pending chapters. `--force`, `--only N [N...]`. |
-| `status` | Show per-chapter progress and total duration. |
-| `assemble` | Join chapter clips; `--format mp3`, `--output PATH`. |
+| `init` | Create a project directory, config, manifest and directories. Accepts all the flags below. |
+| `config` | Print effective settings, or persist changes to `book.toml`. |
+| `synthesize` | Synthesize pending chapters. `--force`, `--only N [N...]`, plus voice/engine flags. |
+| `status` | Show per-chapter progress, duration and the output split plan. |
+| `assemble` | Join chapter clips into one or several files; audio/output flags. |
 | `voices` | List available tiny-voca voices. |
+
+Every config value can be overridden on the command line for a single run:
+
+- Voice: `--voice F2|M2`, `--speed`, `--pitch-shift`, `--pitch-range`, `--seed`.
+- Engine: `--device`, `--checkpoint`.
+- Audio: `--chapter-gap-ms`, `--sample-rate`, `--format wav|mp3`, `--bitrate`.
+- Output: `--chapters-per-file N|all`, `--name-pattern`, `--title`, `--output`.
+
+`config` writes those overrides into `book.toml` permanently; `synthesize` and
+`assemble` apply them only to that run. `init` accepts them when creating a project.
 
 ## Project layout
 
@@ -154,12 +168,66 @@ chapter_gap_ms = 700
 output_format = "wav"   # "wav" or "mp3" (mp3 needs ffmpeg)
 mp3_bitrate = "128k"
 
+[output]
+# 0 or "all" = one file for the whole book; N = N chapters per output file.
+chapters_per_file = 0
+# Placeholders: {title}, {chapter} (part number or "all"), {range} (or "all").
+# Empty = use paths.output, or append _partN when splitting.
+name_pattern = ""
+
 [paths]
 audio_dir = "audio"
 output = "out/audiobook.wav"
 ```
 
 Relative paths are resolved against the directory containing `book.toml`.
+The output extension follows `audio.output_format` (the config adds/renames it
+automatically).
+
+### Output splitting and naming
+
+`output.chapters_per_file` groups chapters into separate audiobook files.
+The final group may be shorter: **77 chapters with 10 per file produces 8
+files** — seven with 10 chapters and a last one with 7. `0` or `"all"` produces
+one file containing everything.
+
+`output.name_pattern` controls filenames. Available placeholders:
+
+| Placeholder | Split mode | Single-file mode |
+| --- | --- | --- |
+| `{title}` | book title | book title |
+| `{chapter}` | part number (`1`, `2`, …) | `all` |
+| `{range}` | `001-010`, `071-077`, … | `all` |
+
+With an empty pattern, single-file output uses `paths.output` exactly, and
+split mode appends `_partN` to its stem. When splitting, the pattern must
+contain `{chapter}` or `{range}` so files cannot overwrite each other.
+
+Examples:
+
+```bash
+# One big book, custom name: out/My Book - all.wav
+uv run audiobook-creator config --config book.toml \
+  --chapters-per-file all --name-pattern "{title} - {chapter}"
+
+# Ten chapters per file: out/My Book - 1.wav ... out/My Book - 8.wav
+uv run audiobook-creator config --config book.toml \
+  --chapters-per-file 10 --name-pattern "{title} - {chapter}"
+
+# One-off override for a single assembly, by chapter ranges:
+uv run audiobook-creator assemble --config book.toml \
+  --chapters-per-file 10 --name-pattern "{title}_{range}"
+
+# Change voice and pacing, then synthesize:
+uv run audiobook-creator config --config book.toml --voice M2 --speed 1.1
+uv run audiobook-creator synthesize --config book.toml
+
+# Or override just one run without touching the config:
+uv run audiobook-creator synthesize --config book.toml --voice F2 --pitch-range 1.2
+```
+
+`config` and `status` both print the resulting output plan (file count and
+chapters per file) before you render.
 
 ## Tests
 

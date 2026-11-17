@@ -9,6 +9,7 @@ the directory that holds the config file.
 from __future__ import annotations
 
 import json
+import string
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,6 +21,24 @@ CONFIG_FILENAME = "book.toml"
 DEFAULT_CHAPTER_PATTERN = (
     r"^\s*(?:#{1,3}\s*)?(?:chapter|part|book)\s+([^\n]+?)\s*$"
 )
+
+
+def parse_chapters_per_file(value: Any) -> int:
+    """Normalize ``chapters_per_file`` from TOML or the CLI.
+
+    ``0``, ``"all"`` and ``""`` all mean "one file for the whole book".
+    """
+    if isinstance(value, str) and value.strip().lower() in ("all", ""):
+        return 0
+    try:
+        count = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"chapters_per_file must be an integer or 'all', got {value!r}"
+        ) from exc
+    if count < 0:
+        raise ValueError("chapters_per_file cannot be negative")
+    return count
 
 
 @dataclass
@@ -51,6 +70,52 @@ class AudioSettings:
             raise ValueError("output_format must be 'wav' or 'mp3'")
         if self.chapter_gap_ms < 0:
             raise ValueError("chapter_gap_ms cannot be negative")
+        if self.sample_rate <= 0:
+            raise ValueError("sample_rate must be greater than zero")
+        if not self.mp3_bitrate.strip():
+            raise ValueError("mp3_bitrate cannot be empty")
+
+
+@dataclass
+class OutputSettings:
+    """How assembled audio is split into files and named.
+
+    ``chapters_per_file = 0`` produces one file for the whole book. Otherwise
+    chapters are grouped, with a final short group when the count is not an
+    exact multiple (77 chapters / 10 -> 8 files, last one holding 7).
+
+    ``name_pattern`` may use ``{title}``, ``{chapter}`` (part number, or
+    ``all`` for a single file) and ``{range}`` (chapter range, or ``all``).
+    An empty pattern uses ``paths.output`` for a single file, or appends
+    ``_partN`` to its stem when splitting.
+    """
+
+    chapters_per_file: int = 0
+    name_pattern: str = ""
+
+    def validate(self) -> None:
+        if self.chapters_per_file < 0:
+            raise ValueError("output.chapters_per_file cannot be negative")
+        if not self.name_pattern:
+            return
+        fields = {
+            name
+            for _literal, name, _format_spec, _conversion in string.Formatter().parse(
+                self.name_pattern
+            )
+            if name
+        }
+        unknown = fields - {"title", "chapter", "range"}
+        if unknown:
+            raise ValueError(
+                "unknown output.name_pattern placeholder(s): "
+                + ", ".join(sorted(unknown))
+            )
+        if self.chapters_per_file > 0 and not fields & {"chapter", "range"}:
+            raise ValueError(
+                "output.name_pattern must contain {chapter} or {range} when "
+                "output.chapters_per_file > 0, otherwise files would overwrite each other"
+            )
 
 
 @dataclass
@@ -65,12 +130,14 @@ class Settings:
     output: Path = Path("out/audiobook.wav")
     voice: VoiceSettings = field(default_factory=VoiceSettings)
     audio: AudioSettings = field(default_factory=AudioSettings)
+    output_options: OutputSettings = field(default_factory=OutputSettings)
 
     def validate(self) -> None:
         if not self.title.strip():
             raise ValueError("book.title cannot be empty")
         self.voice.validate()
         self.audio.validate()
+        self.output_options.validate()
 
 
 def _resolve(value: str | Path, base: Path) -> Path:
@@ -86,6 +153,7 @@ def settings_from_dict(data: dict[str, Any], base: Path) -> Settings:
     paths = data.get("paths", {})
     voice = data.get("voice", {})
     audio = data.get("audio", {})
+    output = data.get("output", {})
 
     settings = Settings(
         title=str(book.get("title", "")),
@@ -109,6 +177,12 @@ def settings_from_dict(data: dict[str, Any], base: Path) -> Settings:
             output_format=str(audio.get("output_format", "wav")),
             mp3_bitrate=str(audio.get("mp3_bitrate", "128k")),
         ),
+        output_options=OutputSettings(
+            chapters_per_file=parse_chapters_per_file(
+                output.get("chapters_per_file", 0)
+            ),
+            name_pattern=str(output.get("name_pattern", "")),
+        ),
     )
     settings.validate()
     return settings
@@ -129,46 +203,101 @@ def _toml_string(value: str) -> str:
     return json.dumps(value)
 
 
+def _display_path(path: Path, base: Path | None = None) -> str:
+    if base is not None:
+        try:
+            return str(path.relative_to(base))
+        except ValueError:
+            pass
+    return str(path)
+
+
+def render_settings(settings: Settings, base: Path | None = None) -> str:
+    """Render a complete, commented ``book.toml`` from ``settings``.
+
+    When ``base`` is given, paths underneath it are written relative to it.
+    """
+    settings.validate()
+    return f"""# Audiobook project configuration.
+# Relative paths are resolved against the directory containing this file.
+
+[book]
+title = {_toml_string(settings.title)}
+author = {_toml_string(settings.author)}
+
+[source]
+path = {_toml_string(_display_path(settings.source, base))}
+# A line starting a chapter. Group 1 is used as the chapter title.
+chapter_pattern = {_toml_string(settings.chapter_pattern)}
+
+[engine]
+# tiny-voca inference checkpoint. See scripts/setup.sh to download it.
+checkpoint = {_toml_string(_display_path(settings.checkpoint, base))}
+device = {_toml_string(settings.device)}
+
+[voice]
+# "F2" (female) or "M2" (male). tiny-voca is English only.
+voice = {_toml_string(settings.voice.voice)}
+speed = {settings.voice.speed}
+pitch_shift = {settings.voice.pitch_shift}
+pitch_range = {settings.voice.pitch_range}
+seed = {settings.voice.seed}
+
+[audio]
+sample_rate = {settings.audio.sample_rate}
+chapter_gap_ms = {settings.audio.chapter_gap_ms}
+output_format = {_toml_string(settings.audio.output_format)}   # "wav" or "mp3" (mp3 requires ffmpeg)
+mp3_bitrate = {_toml_string(settings.audio.mp3_bitrate)}
+
+[output]
+# 0 (or "all") = one file for the whole book. N = N chapters per file;
+# the last file holds the remainder (77 / 10 -> 8 files, last with 7).
+chapters_per_file = {settings.output_options.chapters_per_file}
+# Placeholders: {{title}}, {{chapter}} (part number or "all"), {{range}} (or "all").
+# Empty = use paths.output, or append _partN to its stem when splitting.
+name_pattern = {_toml_string(settings.output_options.name_pattern)}
+
+[paths]
+audio_dir = {_toml_string(_display_path(settings.audio_dir, base))}
+output = {_toml_string(_display_path(settings.output, base))}
+"""
+
+
 def render_config(
     title: str,
     author: str = "",
     source: str = "book.txt",
     checkpoint: str = "weights/tiny-voca.pt",
     voice: str = "F2",
+    *,
+    speed: float = 1.0,
+    pitch_shift: float = 0.0,
+    pitch_range: float = 1.0,
+    seed: int = 0,
+    sample_rate: int = 24000,
+    chapter_gap_ms: int = 700,
+    output_format: str = "wav",
+    mp3_bitrate: str = "128k",
+    chapters_per_file: int | str = 0,
+    name_pattern: str = "",
+    device: str = "cpu",
+    audio_dir: str = "audio",
+    output: str = "out/audiobook.wav",
 ) -> str:
-    """Render a commented starter ``book.toml``."""
-    return f"""# Audiobook project configuration.
-# Relative paths are resolved against the directory containing this file.
-
-[book]
-title = {_toml_string(title)}
-author = {_toml_string(author)}
-
-[source]
-path = {_toml_string(source)}
-# A line starting a chapter. Group 1 is used as the chapter title.
-chapter_pattern = {_toml_string(DEFAULT_CHAPTER_PATTERN)}
-
-[engine]
-# tiny-voca inference checkpoint. See scripts/setup.sh to download it.
-checkpoint = {_toml_string(checkpoint)}
-device = "cpu"
-
-[voice]
-# "F2" (female) or "M2" (male). tiny-voca is English only.
-voice = {_toml_string(voice)}
-speed = 1.0
-pitch_shift = 0.0
-pitch_range = 1.0
-seed = 0
-
-[audio]
-sample_rate = 24000
-chapter_gap_ms = 700
-output_format = "wav"   # "wav" or "mp3" (mp3 requires ffmpeg)
-mp3_bitrate = "128k"
-
-[paths]
-audio_dir = "audio"
-output = "out/audiobook.wav"
-"""
+    """Render a commented starter ``book.toml`` (used by ``init``)."""
+    return render_settings(
+        Settings(
+            title=title,
+            author=author,
+            source=Path(source),
+            checkpoint=Path(checkpoint),
+            device=device,
+            audio_dir=Path(audio_dir),
+            output=Path(output),
+            voice=VoiceSettings(voice, speed, pitch_shift, pitch_range, seed),
+            audio=AudioSettings(sample_rate, chapter_gap_ms, output_format, mp3_bitrate),
+            output_options=OutputSettings(
+                parse_chapters_per_file(chapters_per_file), name_pattern
+            ),
+        )
+    )

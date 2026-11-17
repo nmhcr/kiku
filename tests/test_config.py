@@ -6,6 +6,7 @@ from audiobook_creator.config import (
     render_config,
     settings_from_dict,
     load_settings,
+    parse_chapters_per_file,
     CONFIG_FILENAME,
 )
 
@@ -37,6 +38,51 @@ class ConfigTest(unittest.TestCase):
     def test_invalid_voice(self):
         with self.assertRaises(ValueError):
             settings_from_dict({"book": {"title": "x"}, "voice": {"voice": "X"}}, Path("."))
+
+    def test_chapters_per_file_accepts_all(self):
+        self.assertEqual(parse_chapters_per_file("all"), 0)
+        self.assertEqual(parse_chapters_per_file("ALL"), 0)
+        self.assertEqual(parse_chapters_per_file(10), 10)
+        with self.assertRaises(ValueError):
+            parse_chapters_per_file("many")
+
+    def test_output_settings_from_toml(self):
+        settings = settings_from_dict(
+            {
+                "book": {"title": "x"},
+                "output": {"chapters_per_file": 10, "name_pattern": "{title} - {chapter}"},
+            },
+            Path("."),
+        )
+        self.assertEqual(settings.output_options.chapters_per_file, 10)
+        self.assertEqual(settings.output_options.name_pattern, "{title} - {chapter}")
+        self.assertEqual(settings.output_options.chapters_per_file, 10)
+
+    def test_split_pattern_must_differ_per_file(self):
+        with self.assertRaises(ValueError):
+            settings_from_dict(
+                {
+                    "book": {"title": "x"},
+                    "output": {"chapters_per_file": 10, "name_pattern": "{title}"},
+                },
+                Path("."),
+            )
+
+    def test_unknown_placeholder_rejected(self):
+        with self.assertRaises(ValueError):
+            settings_from_dict(
+                {
+                    "book": {"title": "x"},
+                    "output": {"name_pattern": "{title} - {oops}"},
+                },
+                Path("."),
+            )
+
+    def test_render_includes_output_section(self):
+        text = render_config("Book", chapters_per_file=10, name_pattern="{title} {chapter}")
+        self.assertIn("[output]", text)
+        self.assertIn("chapters_per_file = 10", text)
+        self.assertIn('name_pattern = "{title} {chapter}"', text)
 
 
 if __name__ == "__main__":
