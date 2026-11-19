@@ -7,7 +7,7 @@ name = "tts-audiobook"
 version = "0.1.0"
 description = "Audiobook creator scaffold powered by tiny-voca"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.15"  # onnxruntime has no CPython 3.15 wheels yet
 license = { text = "Apache-2.0" }
 authors = [{ name = "Your Name" }]
 dependencies = [
@@ -19,10 +19,15 @@ dependencies = [
 # Installs the tiny-voca engine and its "own" phonemizer front end.
 # The weights and DIZIONE_DATA still need to be set up (see README / scripts/setup.sh).
 engine = [
-  # Declared directly so uv's CPU-only index mapping in [tool.uv.sources]
-  # applies to it (uv does not override transitive dependencies).
+  # Legacy torch backend (optional). Declared directly so uv's CPU-only index
+  # mapping in [tool.uv.sources] applies to it.
   "torch>=2.4,<3",
   "tiny-voca[own] @ git+https://github.com/n4ze3m/tiny-voca.git",
+]
+# Default lightweight backend: ONNX Runtime + the dizione phonemizer, no torch.
+onnx = [
+  "onnxruntime>=1.20,<2",
+  "dizione @ git+https://github.com/n4ze3m/dizione.git",
 ]
 dev = [
   "pytest>=7,<9",

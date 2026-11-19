@@ -20,7 +20,7 @@ from .config import (
     render_settings,
 )
 from .manifest import MANIFEST_FILENAME, Manifest
-from .synthesis import EngineError, Synthesizer
+from .synthesis import EngineError, create_synthesizer
 
 
 def _add_voice_flags(parser: argparse.ArgumentParser) -> None:
@@ -34,7 +34,8 @@ def _add_voice_flags(parser: argparse.ArgumentParser) -> None:
 
 def _add_engine_flags(parser: argparse.ArgumentParser) -> None:
     group = parser.add_argument_group("engine (overrides book.toml)")
-    group.add_argument("--device", help="torch device, e.g. cpu or cuda")
+    group.add_argument("--backend", choices=("onnx", "torch"), help="inference backend (default: onnx)")
+    group.add_argument("--device", help="torch device, e.g. cpu")
     group.add_argument("--checkpoint", help="path to tiny-voca checkpoint")
 
 
@@ -128,6 +129,7 @@ SETTING_ATTRS = (
     "pitch_shift",
     "pitch_range",
     "seed",
+    "backend",
     "device",
     "checkpoint",
     "chapter_gap_ms",
@@ -238,10 +240,15 @@ def command_init(args: argparse.Namespace) -> int:
     args.title = title
     args.author = author
 
-    # If the checkpoint exists relative to the current directory, store an
-    # absolute path so weights can live outside the project directory.
+    # Store an absolute weights anchor when the assets exist relative to the
+    # current directory, so they can live outside the project directory.
+    # ONNX installs have no .pt file, hence the config/ONNX asset check.
     checkpoint = Path(args.checkpoint).expanduser() if args.checkpoint else Path("weights/tiny-voca.pt")
-    checkpoint_value = str(checkpoint.resolve()) if checkpoint.is_file() else str(checkpoint)
+    weights_dir = checkpoint.parent
+    has_onnx = (weights_dir / "config.json").is_file() and (
+        weights_dir / "onnx" / "model.onnx"
+    ).is_file()
+    checkpoint_value = str(checkpoint.resolve()) if checkpoint.is_file() or has_onnx else str(checkpoint)
 
     settings = Settings(
         title=title,
@@ -279,6 +286,7 @@ def command_config(args: argparse.Namespace) -> int:
     except FileNotFoundError:
         chapters = []
     print(f"Title: {settings.title}  Author: {settings.author or '-'}")
+    print(f"Engine: {settings.backend}  device: {settings.device}")
     print(
         f"Voice: {settings.voice.voice}  speed={settings.voice.speed}  "
         f"pitch_shift={settings.voice.pitch_shift}  pitch_range={settings.voice.pitch_range}  "
@@ -323,8 +331,8 @@ def command_synthesize(args: argparse.Namespace) -> int:
         return 0
 
     try:
-        engine = Synthesizer(settings.checkpoint, settings.voice, settings.device).load()
-    except EngineError as exc:
+        engine = create_synthesizer(settings).load()
+    except (EngineError, RuntimeError) as exc:
         print(f"Engine error: {exc}", file=sys.stderr)
         return 1
 

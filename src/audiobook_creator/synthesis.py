@@ -12,11 +12,23 @@ from pathlib import Path
 
 import numpy as np
 
-from .config import VoiceSettings
+from .config import Settings, VoiceSettings
 
 
 class EngineError(RuntimeError):
     """Raised when the tiny-voca engine is missing or misconfigured."""
+
+
+def create_synthesizer(settings: Settings):
+    """Build the synthesizer for the configured backend.
+
+    Both backends expose ``load()``, ``sample_rate`` and ``synthesize(text)``.
+    """
+    if settings.backend == "onnx":
+        from .onnx_backend import OnnxSynthesizer
+
+        return OnnxSynthesizer(settings.checkpoint, settings.voice, settings.device)
+    return Synthesizer(settings.checkpoint, settings.voice, settings.device)
 
 
 class Synthesizer:

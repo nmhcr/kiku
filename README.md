@@ -16,6 +16,8 @@ two voices.
 - Split a source text into chapters using configurable heading patterns.
 - Synthesize chapters one at a time with tiny-voca (`F2` / `M2`, speed and
   pitch controls), writing one WAV per chapter.
+- Lightweight **ONNX Runtime backend by default** (no torch/CUDA), with an
+  optional torch backend for compatibility.
 - Resumable: progress is tracked in `manifest.json`; finished chapters are
   skipped on the next run.
 - Assemble chapters into one audiobook or into groups of N chapters per file,
@@ -25,10 +27,10 @@ two voices.
 
 ## Install
 
-Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
+Requires Python 3.11–3.14 and [uv](https://docs.astral.sh/uv/).
 
-The one-shot script creates `.venv`, installs the project with the tiny-voca
-engine, and downloads the weights:
+The one-shot script creates `.venv`, installs the lightweight ONNX backend,
+and downloads the model:
 
 ```bash
 bash scripts/setup.sh
@@ -37,29 +39,29 @@ bash scripts/setup.sh
 Or do it manually:
 
 ```bash
-# Creates .venv and uv.lock, installs project + engine + dev tools.
-# pyproject.toml pins torch to the CPU-only index (~184 MB instead of ~4 GB
-# of CUDA libraries from the default Linux PyPI wheel).
-uv sync --extra engine --extra dev
+# Creates .venv, installs ONNX Runtime + dizione (no torch) and dev tools.
+uv sync --extra onnx --extra dev
 
-# Fetch only the checkpoint (18 MB) and phonemizer data (5.4 MB).
+# Fetch only the ONNX model (21 MB), config and phonemizer data (5.4 MB).
 uv run python - <<'PY'
 from huggingface_hub import snapshot_download
 
 snapshot_download(
     "n4ze3m/tiny-voca",
     local_dir="weights",
-    allow_patterns=["tiny-voca.pt", "phonemizer/*"],
+    allow_patterns=["config.json", "onnx/model.onnx", "phonemizer/*"],
 )
 PY
 
-# Tell tiny-voca's phonemizer where its data lives.
+# Tell the phonemizer where its data lives.
 export DIZIONE_DATA="$PWD/weights/phonemizer"
 ```
 
-`uv.lock` is committed so installs are reproducible; it pins torch to the
-CPU-only build and contains no CUDA packages. The engine is installed from
-tiny-voca's git repository, so `git` must be available.
+`uv.lock` is committed for reproducible installs. To use the legacy torch
+backend instead, run `uv sync --extra engine --extra dev`, download
+`tiny-voca.pt` as well, and set `engine.backend = "torch"` in `book.toml`
+(or pass `--backend torch`). `git` must be available because dizione/tiny-voca
+are installed from their git repositories.
 
 > tiny-voca is English only and has two fixed voices. Foreign names and unusual
 > spellings are often mispronounced. See the
@@ -91,17 +93,18 @@ dependency).
 
 The default setup is deliberately CPU-only and lightweight:
 
-- **Requirements**: Python 3.11+, ~1 GB RAM for synthesis, no GPU.
-- **Footprint**: CPU torch wheel, numpy, soundfile, the 5.4 MB dizione data and
-  the 18 MB checkpoint — no CUDA libraries, no network access at runtime.
+- **Requirements**: Python 3.11–3.14 (onnxruntime has no 3.15 wheels yet),
+  ~1 GB RAM for synthesis, no GPU.
+- **Footprint**: ONNX Runtime, numpy, soundfile, the 5.4 MB dizione data and
+  the 21 MB ONNX model — no torch, no CUDA libraries, no runtime network calls.
 - **Memory**: assembly streams one chapter at a time, so even a 16-hour book
   uses roughly one chapter of RAM, not the whole audiobook.
 - **Speed**: tiny-voca is around 70x real time on four CPU threads; slower
   boards are still fine for unattended batch rendering.
 
-Synthesis uses `device = "cpu"` in `book.toml`. A future ONNX Runtime backend
-is the path to phone/browser use without torch at all (21 MB ONNX model plus a
-small runtime).
+Synthesis uses `engine.backend = "onnx"` by default. ONNX Runtime also has
+mobile and WebAssembly builds, which is the bridge to phone and browser-local
+apps. The torch backend remains available via `--backend torch` if needed.
 
 ## Quickstart
 
@@ -116,8 +119,8 @@ uv run audiobook-creator init \
 # 2. Adjust settings by editing my-book/book.toml or from the CLI:
 uv run audiobook-creator config --config my-book/book.toml \
   --voice F2 --speed 1.0 --chapter-gap-ms 700 --chapters-per-file all
-#    `init` stores an absolute checkpoint path if `weights/tiny-voca.pt` exists
-#    when you run it; otherwise adjust `engine.checkpoint` in the config.
+#    `init` anchors the weights path absolutely when the model assets exist
+#    relative to your current directory; otherwise set `engine.checkpoint`.
 
 # 3. Synthesize chapters (safe to re-run; resumes where it stopped).
 export DIZIONE_DATA="$PWD/weights/phonemizer"
@@ -164,8 +167,10 @@ tts-audiobook/
 │   ├── config.py               # book.toml data model + loader
 │   ├── book.py                 # source dispatch + chapter splitting
 │   ├── epub.py                 # EPUB reader (stdlib zipfile/XML)
-│   ├── synthesis.py            # lazy tiny-voca wrapper
-│   ├── audio.py                # WAV I/O + final assembly
+│   ├── synthesis.py            # backend facade (ONNX/torch)
+│   ├── onnx_backend.py         # ONNX Runtime synthesis
+│   ├── speech_text.py          # sentence splitting + peak limiting
+│   ├── audio.py                # WAV I/O + streaming final assembly
 │   └── manifest.py             # resumable progress (JSON)
 └── tests/                      # stdlib unittest tests
 ```
@@ -193,7 +198,8 @@ path = "book.txt"
 chapter_pattern = "^\\s*(?:#{1,3}\\s*)?(?:chapter|part|book)\\s+([^\\n]+?)\\s*$"
 
 [engine]
-checkpoint = "weights/tiny-voca.pt"   # relative to project dir
+backend = "onnx"              # "onnx" (default) or "torch"
+checkpoint = "weights/tiny-voca.pt"   # anchors weights/ dir; needed for torch
 device = "cpu"
 
 [voice]
@@ -278,11 +284,19 @@ uv run python -m unittest discover -s tests
 
 ## How synthesis works
 
-`synthesis.py` calls tiny-voca's `tiny_voca.infer.speak_text()`, which reads
-text of any length sentence by sentence, joins the audio and keeps the peak
-below clipping. The tool handles chapter-level concerns (splitting, file
-naming, resume, gaps, assembly) and leaves voice quality and pronunciation to
-tiny-voca.
+`synthesis.py` is a facade over two interchangeable backends with the same
+`load()` / `synthesize(text)` interface:
+
+- **ONNX (default)**: `onnx_backend.py` phonemizes text with dizione and runs
+  `onnx/model.onnx` through ONNX Runtime on CPU.
+- **Torch (optional)**: `synthesis.py` calls tiny-voca's
+  `tiny_voca.infer.speak_text()` on the PyTorch checkpoint.
+
+Both read text of any length sentence by sentence, join the audio and keep the
+peak below clipping. `speech_text.py` contains the local sentence splitting and
+peak limiting, so the ONNX backend never needs to import torch. The tool
+handles chapter-level concerns (splitting, file naming, resume, gaps, assembly)
+and leaves voice quality and pronunciation to tiny-voca.
 
 ## License
 

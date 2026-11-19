@@ -125,6 +125,7 @@ class Settings:
     source: Path = Path("book.txt")
     chapter_pattern: str = DEFAULT_CHAPTER_PATTERN
     checkpoint: Path = Path("weights/tiny-voca.pt")
+    backend: str = "onnx"  # "onnx" (default, lightweight) or "torch"
     device: str = "cpu"
     audio_dir: Path = Path("audio")
     output: Path = Path("out/audiobook.wav")
@@ -135,6 +136,8 @@ class Settings:
     def validate(self) -> None:
         if not self.title.strip():
             raise ValueError("book.title cannot be empty")
+        if self.backend not in ("onnx", "torch"):
+            raise ValueError("engine.backend must be 'onnx' or 'torch'")
         self.voice.validate()
         self.audio.validate()
         self.output_options.validate()
@@ -161,6 +164,7 @@ def settings_from_dict(data: dict[str, Any], base: Path) -> Settings:
         source=_resolve(source.get("path", "book.txt"), base),
         chapter_pattern=str(source.get("chapter_pattern", DEFAULT_CHAPTER_PATTERN)),
         checkpoint=_resolve(engine.get("checkpoint", "weights/tiny-voca.pt"), base),
+        backend=str(engine.get("backend", "onnx")).lower(),
         device=str(engine.get("device", "cpu")),
         audio_dir=_resolve(paths.get("audio_dir", "audio"), base),
         output=_resolve(paths.get("output", "out/audiobook.wav"), base),
@@ -231,7 +235,9 @@ path = {_toml_string(_display_path(settings.source, base))}
 chapter_pattern = {_toml_string(settings.chapter_pattern)}
 
 [engine]
-# tiny-voca inference checkpoint. See scripts/setup.sh to download it.
+# Backend: "onnx" (default, lightweight) or "torch".
+backend = {_toml_string(settings.backend)}
+# tiny-voca inference checkpoint (needed for the torch backend only).
 checkpoint = {_toml_string(_display_path(settings.checkpoint, base))}
 device = {_toml_string(settings.device)}
 

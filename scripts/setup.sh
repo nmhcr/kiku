@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-shot setup with uv: install the project + tiny-voca engine, download weights.
+# One-shot setup with uv: install the lightweight ONNX backend and download models.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -10,19 +10,19 @@ if ! command -v uv >/dev/null 2>&1; then
   exit 1
 fi
 
-# Creates .venv, installs the project and extras, and writes uv.lock.
-# The [tool.uv.sources] pin in pyproject.toml keeps torch on the CPU-only index.
-uv sync --extra engine --extra dev
+# Creates .venv and installs the ONNX backend + dev tools (no torch/CUDA).
+# Use --extra engine instead if you want the legacy torch backend.
+uv sync --extra onnx --extra dev
 
-# Fetch only the checkpoint and phonemizer data (the full HF repo is ~101 MB).
-if [ ! -f "$ROOT/weights/tiny-voca.pt" ] || [ ! -d "$ROOT/weights/phonemizer" ]; then
+# Fetch only what the ONNX backend needs (the full HF repo is ~101 MB).
+if [ ! -f "$ROOT/weights/onnx/model.onnx" ] || [ ! -d "$ROOT/weights/phonemizer" ]; then
   uv run python - <<'PY'
 from huggingface_hub import snapshot_download
 
 snapshot_download(
     "n4ze3m/tiny-voca",
     local_dir="weights",
-    allow_patterns=["tiny-voca.pt", "phonemizer/*"],
+    allow_patterns=["config.json", "onnx/model.onnx", "phonemizer/*"],
 )
 PY
 fi
