@@ -7,11 +7,14 @@ import numpy as np
 import soundfile as sf
 
 from audiobook_creator.service import (
+    SynthesisControl,
+    SynthesisInProgress,
     create_project,
     get_settings,
     get_status,
     list_chapters,
     preview_voice,
+    project_lock,
     synthesize,
     update_settings,
 )
@@ -120,6 +123,36 @@ class ServiceTest(unittest.TestCase):
             wave, rate = preview_voice(self.config, "Hello")
         self.assertEqual(len(wave), 24000)
         self.assertEqual(rate, 24000)
+
+    def test_range_and_count_filter(self):
+        with patch("audiobook_creator.service.create_synthesizer", return_value=FakeEngine()):
+            result = synthesize(self.config, start=2, count=1)
+        self.assertEqual(result.synthesized, 1)
+        self.assertEqual(get_status(self.config).chapters[1].status, "done")
+        self.assertEqual(get_status(self.config).chapters[0].status, "pending")
+
+    def test_stop_before_start(self):
+        control = SynthesisControl()
+        control.stop()
+        with patch("audiobook_creator.service.create_synthesizer", return_value=FakeEngine()):
+            result = synthesize(self.config, control=control)
+        self.assertTrue(result.stopped)
+        self.assertEqual(result.synthesized, 0)
+
+    def test_duplicate_synthesis_is_rejected(self):
+        with project_lock(self.config, "synthesize"):
+            with self.assertRaises(SynthesisInProgress):
+                with patch(
+                    "audiobook_creator.service.create_synthesizer", return_value=FakeEngine()
+                ):
+                    synthesize(self.config)
+
+    def test_assemble_num_files(self):
+        with patch("audiobook_creator.service.create_synthesizer", return_value=FakeEngine()):
+            synthesize(self.config)
+        written = assemble_service(self.config, num_files=2)
+        self.assertEqual(len(written), 2)
+        self.assertEqual([file.chapter_count for file in written], [1, 1])
 
     def test_assemble_without_audio_raises(self):
         with self.assertRaises(ValueError):

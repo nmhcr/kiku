@@ -7,11 +7,19 @@ structured results, and report long-running work through progress callbacks.
 
 from __future__ import annotations
 
+import math
+import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 import numpy as np
+
+try:  # Windows has no fcntl; fall back to an in-process lock there.
+    import fcntl
+except ImportError:  # pragma: no cover - platform dependent
+    fcntl = None
 
 from .audio import assemble as assemble_audio
 from .audio import split_groups, write_wav
@@ -75,7 +83,7 @@ class ProjectInfo:
 class SynthProgress:
     number: int
     title: str
-    state: str  # "started" | "done" | "failed"
+    state: str  # "started" | "done" | "failed" | "paused" | "resumed" | "stopped"
     duration_seconds: float | None = None
     error: str | None = None
 
@@ -86,6 +94,80 @@ class SynthResult:
     failed: int
     skipped: int
     sample_rate: int = 0
+    stopped: bool = False
+
+
+class SynthesisInProgress(RuntimeError):
+    """Raised when another job already holds the project's lock."""
+
+
+class SynthesisControl:
+    """Thread-safe pause/resume/stop signals for a synthesis job."""
+
+    def __init__(self) -> None:
+        self._stop = threading.Event()
+        self._paused = threading.Event()
+        self._condition = threading.Condition()
+
+    @property
+    def stopped(self) -> bool:
+        return self._stop.is_set()
+
+    @property
+    def paused(self) -> bool:
+        return self._paused.is_set()
+
+    def pause(self) -> None:
+        self._paused.set()
+
+    def resume(self) -> None:
+        with self._condition:
+            self._paused.clear()
+            self._condition.notify_all()
+
+    def stop(self) -> None:
+        self._stop.set()
+        with self._condition:
+            self._condition.notify_all()
+
+    def wait_if_paused(self) -> None:
+        with self._condition:
+            while self._paused.is_set() and not self._stop.is_set():
+                self._condition.wait(timeout=0.5)
+
+
+_process_locks: dict[str, threading.Lock] = {}
+_process_locks_guard = threading.Lock()
+
+
+@contextmanager
+def project_lock(config_path: Path, name: str) -> Iterator[None]:
+    """Prevent two processes from running the same job on a project."""
+    lock_path = config_path.parent / f".{name}.lock"
+    if fcntl is not None:
+        with open(lock_path, "a+") as handle:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError as exc:
+                raise SynthesisInProgress(
+                    f"another {name} job is already running for this project"
+                ) from exc
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    else:  # pragma: no cover - platform dependent
+        key = str(lock_path)
+        with _process_locks_guard:
+            lock = _process_locks.setdefault(key, threading.Lock())
+        if not lock.acquire(blocking=False):
+            raise SynthesisInProgress(
+                f"another {name} job is already running for this project"
+            )
+        try:
+            yield
+        finally:
+            lock.release()
 
 
 @dataclass
@@ -303,98 +385,150 @@ def synthesize(
     *,
     force: bool = False,
     only: list[int] | None = None,
+    start: int | None = None,
+    end: int | None = None,
+    count: int | None = None,
     overrides: dict[str, Any] | None = None,
     progress: SynthCallback | None = None,
+    control: SynthesisControl | None = None,
 ) -> SynthResult:
-    """Synthesize pending chapters and update the manifest."""
-    config_path = _config_path(config)
-    settings = get_settings(config_path)
-    apply_overrides(settings, overrides or {})
-    settings.validate()
-    chapters = _load_chapters(settings)
-    if not chapters:
-        raise ValueError("No chapters found in the source text.")
+    """Synthesize selected chapters, updating the manifest as it goes.
 
-    manifest = _load_manifest(config_path, settings)
-    manifest.sync(chapters)
-    targets = [chapter for chapter in chapters if force or not manifest.is_done(chapter.number)]
-    if only is not None:
-        wanted = set(only)
-        targets = [chapter for chapter in targets if chapter.number in wanted]
-    skipped = len(chapters) - len(targets)
-    result = SynthResult(synthesized=0, failed=0, skipped=skipped)
-    if not targets:
+    ``only``, ``start`` and ``end`` filter by chapter number; ``count`` limits
+    the result to at most N chapters in book order. Pass ``control`` to pause
+    or stop the job cooperatively between chapters.
+    """
+    config_path = _config_path(config)
+    with project_lock(config_path, "synthesize"):
+        settings = get_settings(config_path)
+        apply_overrides(settings, overrides or {})
+        settings.validate()
+        chapters = _load_chapters(settings)
+        if not chapters:
+            raise ValueError("No chapters found in the source text.")
+
+        manifest = _load_manifest(config_path, settings)
+        manifest.sync(chapters)
+        targets = [chapter for chapter in chapters if force or not manifest.is_done(chapter.number)]
+        if only is not None:
+            wanted = set(only)
+            targets = [chapter for chapter in targets if chapter.number in wanted]
+        if start is not None:
+            targets = [chapter for chapter in targets if chapter.number >= start]
+        if end is not None:
+            targets = [chapter for chapter in targets if chapter.number <= end]
+        if count is not None:
+            if count < 0:
+                raise ValueError("count cannot be negative")
+            targets = targets[:count]
+
+        skipped = len(chapters) - len(targets)
+        result = SynthResult(synthesized=0, failed=0, skipped=skipped)
+        if not targets:
+            manifest.save(config_path.parent / MANIFEST_FILENAME)
+            return result
+
+        engine = create_synthesizer(settings).load()
+        result.sample_rate = engine.sample_rate
+        paused_reported = False
+        for chapter in targets:
+            if control and control.stopped:
+                result.stopped = True
+                if progress:
+                    progress(SynthProgress(0, "", "stopped"))
+                break
+            if control and control.paused:
+                if not paused_reported and progress:
+                    progress(SynthProgress(chapter.number, chapter.title, "paused"))
+                    paused_reported = True
+                control.wait_if_paused()
+                if control.stopped:
+                    result.stopped = True
+                    if progress:
+                        progress(SynthProgress(0, "", "stopped"))
+                    break
+                if paused_reported and progress:
+                    progress(SynthProgress(chapter.number, chapter.title, "resumed"))
+                    paused_reported = False
+
+            if progress:
+                progress(SynthProgress(chapter.number, chapter.title, "started"))
+            filename = f"chapter_{chapter.number:04d}.wav"
+            target = settings.audio_dir / filename
+            try:
+                samples = engine.synthesize(chapter.text)
+                write_wav(target, samples, engine.sample_rate)
+                duration = len(samples) / engine.sample_rate
+            except Exception as exc:
+                manifest.mark_failed(chapter.number)
+                result.failed += 1
+                if progress:
+                    progress(SynthProgress(chapter.number, chapter.title, "failed", error=str(exc)))
+                continue
+            try:
+                stored = str(target.relative_to(config_path.parent))
+            except ValueError:
+                stored = str(target)
+            manifest.mark_done(chapter.number, stored, duration)
+            result.synthesized += 1
+            if progress:
+                progress(SynthProgress(chapter.number, chapter.title, "done", duration_seconds=duration))
         manifest.save(config_path.parent / MANIFEST_FILENAME)
         return result
-
-    engine = create_synthesizer(settings).load()
-    result.sample_rate = engine.sample_rate
-    for chapter in targets:
-        if progress:
-            progress(SynthProgress(chapter.number, chapter.title, "started"))
-        filename = f"chapter_{chapter.number:04d}.wav"
-        target = settings.audio_dir / filename
-        try:
-            samples = engine.synthesize(chapter.text)
-            write_wav(target, samples, engine.sample_rate)
-            duration = len(samples) / engine.sample_rate
-        except Exception as exc:
-            manifest.mark_failed(chapter.number)
-            result.failed += 1
-            if progress:
-                progress(SynthProgress(chapter.number, chapter.title, "failed", error=str(exc)))
-            continue
-        try:
-            stored = str(target.relative_to(config_path.parent))
-        except ValueError:
-            stored = str(target)
-        manifest.mark_done(chapter.number, stored, duration)
-        result.synthesized += 1
-        if progress:
-            progress(SynthProgress(chapter.number, chapter.title, "done", duration_seconds=duration))
-    manifest.save(config_path.parent / MANIFEST_FILENAME)
-    return result
 
 
 def assemble(
     config: str | Path = CONFIG_FILENAME,
     *,
     overrides: dict[str, Any] | None = None,
+    num_files: int | None = None,
     progress: Callable[[OutputFile], None] | None = None,
 ) -> list[OutputFile]:
-    """Assemble completed chapters into one or more audiobook files."""
+    """Assemble completed chapters into one or more audiobook files.
+
+    ``num_files`` is a convenience: it derives ``chapters_per_file`` from the
+    number of completed chapters so the output is split into about N files.
+    """
     config_path = _config_path(config)
-    settings = get_settings(config_path)
-    apply_overrides(settings, overrides or {})
-    settings.validate()
+    with project_lock(config_path, "assemble"):
+        settings = get_settings(config_path)
+        apply_overrides(settings, overrides or {})
+        settings.validate()
 
-    manifest = _load_manifest(config_path, settings)
-    states = sorted(
-        (state for state in manifest.chapters if state.status == "done" and state.file),
-        key=lambda state: state.number,
-    )
-    files = manifest.completed_files(config_path.parent, settings.audio_dir)
-    if not files:
-        raise ValueError("No synthesized chapters found. Run 'synthesize' first.")
-
-    entries = [(state.number, path) for state, path in zip(states, files)]
-    plan = build_output_plan(settings, [number for number, _path in entries])
-    written: list[OutputFile] = []
-    groups = split_groups(entries, settings.output_options.chapters_per_file)
-    for output_plan, group_entries in zip(plan.files, groups):
-        group = [path for _number, path in group_entries]
-        assembled = assemble_audio(group, output_plan.destination, settings.audio)
-        result = OutputFile(
-            path=assembled,
-            first_chapter=output_plan.first_chapter,
-            last_chapter=output_plan.last_chapter,
-            chapter_count=output_plan.chapter_count,
-            size_bytes=assembled.stat().st_size,
+        manifest = _load_manifest(config_path, settings)
+        states = sorted(
+            (state for state in manifest.chapters if state.status == "done" and state.file),
+            key=lambda state: state.number,
         )
-        written.append(result)
-        if progress:
-            progress(result)
-    return written
+        files = manifest.completed_files(config_path.parent, settings.audio_dir)
+        if not files:
+            raise ValueError("No synthesized chapters found. Run 'synthesize' first.")
+
+        if num_files is not None:
+            if num_files <= 0:
+                raise ValueError("num_files must be greater than zero")
+            per_file = max(1, math.ceil(len(files) / num_files))
+            settings.output_options.chapters_per_file = per_file
+            settings.output_options.validate()
+
+        entries = [(state.number, path) for state, path in zip(states, files)]
+        plan = build_output_plan(settings, [number for number, _path in entries])
+        written: list[OutputFile] = []
+        groups = split_groups(entries, settings.output_options.chapters_per_file)
+        for output_plan, group_entries in zip(plan.files, groups):
+            group = [path for _number, path in group_entries]
+            assembled = assemble_audio(group, output_plan.destination, settings.audio)
+            result = OutputFile(
+                path=assembled,
+                first_chapter=output_plan.first_chapter,
+                last_chapter=output_plan.last_chapter,
+                chapter_count=output_plan.chapter_count,
+                size_bytes=assembled.stat().st_size,
+            )
+            written.append(result)
+            if progress:
+                progress(result)
+        return written
 
 
 def preview_voice(

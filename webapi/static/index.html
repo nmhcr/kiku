@@ -109,8 +109,16 @@
         <div id="detail-empty" class="muted">Create or select a project to begin.</div>
         <div id="detail" hidden>
           <div id="summary" class="summary"></div>
+          <div class="grid-3">
+            <label>From chapter<input id="syn-from" type="number" min="1" placeholder="all"></label>
+            <label>To chapter<input id="syn-to" type="number" min="1" placeholder="all"></label>
+            <label>Count<input id="syn-count" type="number" min="1" placeholder="all"></label>
+          </div>
           <div class="actions">
             <button id="btn-synthesize">Synthesize</button>
+            <button id="btn-pause" class="secondary" disabled>Pause</button>
+            <button id="btn-resume" class="secondary" disabled>Resume</button>
+            <button id="btn-stop" class="secondary" disabled>Stop</button>
             <label class="inline"><input id="chk-force" type="checkbox"> Force</label>
             <button id="btn-assemble" class="secondary">Assemble</button>
           </div>
@@ -121,6 +129,7 @@
           <h3>Chapters</h3>
           <div id="chapter-list" class="chapter-list"></div>
           <h3>Output files</h3>
+          <label>Number of output files (optional)<input id="asm-num-files" type="number" min="1" placeholder="e.g. 5"></label>
           <div id="output-list" class="output-list"><p class="muted">Not assembled yet.</p></div>
           <h3>Preview a voice</h3>
           <div class="preview-row">

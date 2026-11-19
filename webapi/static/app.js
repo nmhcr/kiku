@@ -9,6 +9,8 @@ const state = {
   settings: null,
   outputs: [],
   eventSource: null,
+  jobId: null,
+  jobState: null,
 };
 
 function banner(message, kind = "info") {
@@ -30,7 +32,14 @@ async function api(path, options = {}) {
     data = { detail: await response.text() };
   }
   if (!response.ok) {
-    throw new Error((data && data.detail) || `Request failed (${response.status})`);
+    const detail = data && data.detail;
+    const message = typeof detail === "string"
+      ? detail
+      : (detail && detail.message) || (detail && detail.job_id) || `Request failed (${response.status})`;
+    const error = new Error(message);
+    error.status = response.status;
+    error.data = data;
+    throw error;
   }
   return data;
 }
@@ -183,6 +192,15 @@ async function refreshSettings() {
   renderSettings(state.settings);
 }
 
+function setJobState(value) {
+  state.jobState = value;
+  const active = value != null;
+  $("btn-synthesize").disabled = active;
+  $("btn-pause").disabled = !active || value === "paused" || value === "stopping";
+  $("btn-resume").disabled = value !== "paused";
+  $("btn-stop").disabled = !active || value === "stopping";
+}
+
 function closeEvents() {
   if (state.eventSource) {
     state.eventSource.close();
@@ -191,11 +209,23 @@ function closeEvents() {
   $("progress-wrap").hidden = true;
 }
 
+function finishJob(message, kind = "info") {
+  closeEvents();
+  state.jobId = null;
+  setJobState(null);
+  banner(message, kind);
+  refreshStatus().catch(() => {});
+  refreshProjects().catch(() => {});
+}
+
 function updateProgress() {
   const rows = [...document.querySelectorAll("#chapter-list .chapter")];
   const done = rows.filter((row) => row.classList.contains("done")).length;
   $("progress-bar").style.width = rows.length ? `${(done / rows.length) * 100}%` : "0%";
-  $("progress-label").textContent = `Synthesizing… ${done}/${rows.length}`;
+  const prefix =
+    state.jobState === "paused" ? "Paused" :
+    state.jobState === "stopping" ? "Stopping" : "Synthesizing";
+  $("progress-label").textContent = `${prefix}… ${done}/${rows.length}`;
 }
 
 function applyProgressEvent(event) {
@@ -211,6 +241,8 @@ function applyProgressEvent(event) {
 
 function startEvents(jobId) {
   closeEvents();
+  state.jobId = jobId;
+  setJobState("running");
   $("progress-wrap").hidden = false;
   const url =
     `/api/projects/${encodeURIComponent(state.projectId)}/events?job_id=${encodeURIComponent(jobId)}`;
@@ -220,23 +252,20 @@ function startEvents(jobId) {
   events.onmessage = (message) => {
     let data;
     try { data = JSON.parse(message.data); } catch { return; }
-    if (data.type === "done") {
-      events.close();
-      state.eventSource = null;
-      closeEvents();
-      banner(`Synthesis complete: ${data.result.synthesized} chapter(s)`);
-      refreshStatus().catch((error) => banner(error.message, "error"));
-      refreshProjects().catch(() => {});
+    if (data.type === "done" || data.type === "stopped") {
+      const text = data.type === "stopped"
+        ? `Stopped: ${data.result.synthesized} chapter(s) completed`
+        : `Synthesis complete: ${data.result.synthesized} chapter(s)`;
+      finishJob(text);
       return;
     }
     if (data.type === "error") {
-      events.close();
-      state.eventSource = null;
-      closeEvents();
-      banner(data.message, "error");
-      refreshStatus().catch(() => {});
+      finishJob(data.message, "error");
       return;
     }
+    if (data.state === "paused") setJobState("paused");
+    else if (data.state === "resumed") setJobState("running");
+    else if (data.state === "stopped") setJobState("stopping");
     applyProgressEvent(data);
   };
 
@@ -249,8 +278,27 @@ function startEvents(jobId) {
   };
 }
 
+async function jobAction(action) {
+  if (!state.projectId || !state.jobId) return;
+  try {
+    const result = await apiJson(
+      `/api/projects/${encodeURIComponent(state.projectId)}/jobs/${encodeURIComponent(state.jobId)}/${action}`,
+      "POST",
+      {}
+    );
+    if (result.state === "paused") setJobState("paused");
+    else if (result.state === "running") setJobState("running");
+    else if (result.state === "stopping") setJobState("stopping");
+    banner(`Job ${action} requested.`);
+  } catch (error) {
+    banner(error.message, "error");
+  }
+}
+
 async function selectProject(id) {
-  if (state.eventSource) closeEvents();
+  closeEvents();
+  state.jobId = null;
+  setJobState(null);
   state.projectId = id;
   state.outputs = [];
   $("detail-empty").hidden = true;
@@ -324,23 +372,41 @@ $("settings-form").onsubmit = async (event) => {
 
 $("btn-synthesize").onclick = async () => {
   if (!state.projectId) return;
+  const options = {
+    force: $("chk-force").checked,
+    from: numberOrBlank("syn-from"),
+    to: numberOrBlank("syn-to"),
+    count: numberOrBlank("syn-count"),
+  };
   try {
     const result = await apiJson(
       `/api/projects/${encodeURIComponent(state.projectId)}/synthesize`,
       "POST",
-      { force: $("chk-force").checked }
+      options
     );
     startEvents(result.job_id);
   } catch (error) {
-    banner(error.message, "error");
+    const existing = error.data && error.data.detail && error.data.detail.job_id;
+    if (error.status === 409 && existing) {
+      banner("A job is already running; following its progress.", "info");
+      startEvents(existing);
+    } else {
+      banner(error.message, "error");
+    }
   }
 };
+
+$("btn-pause").onclick = () => jobAction("pause");
+$("btn-resume").onclick = () => jobAction("resume");
+$("btn-stop").onclick = () => jobAction("stop");
 
 $("btn-assemble").onclick = async () => {
   if (!state.projectId) return;
   try {
     const files = await apiJson(
-      `/api/projects/${encodeURIComponent(state.projectId)}/assemble`, "POST", {}
+      `/api/projects/${encodeURIComponent(state.projectId)}/assemble`,
+      "POST",
+      { num_files: numberOrBlank("asm-num-files") }
     );
     state.outputs = files || [];
     renderOutputs();

@@ -25,6 +25,7 @@ from .service import (
     synthesize as synthesize_service,
     update_settings,
 )
+from .service import SynthesisInProgress
 
 
 def _add_voice_flags(parser: argparse.ArgumentParser) -> None:
@@ -100,12 +101,16 @@ def build_parser() -> argparse.ArgumentParser:
     syn.add_argument("--config", default=CONFIG_FILENAME, help="path to book.toml")
     syn.add_argument("--force", action="store_true", help="regenerate all chapters")
     syn.add_argument("--only", type=int, nargs="+", help="synthesize specific chapter numbers")
+    syn.add_argument("--from", dest="start", type=int, help="first chapter number (inclusive)")
+    syn.add_argument("--to", dest="end", type=int, help="last chapter number (inclusive)")
+    syn.add_argument("--count", type=int, help="synthesize at most this many chapters")
     _add_voice_flags(syn)
     _add_engine_flags(syn)
 
     ass = sub.add_parser("assemble", help="join chapter clips into one or more audiobooks")
     ass.add_argument("--config", default=CONFIG_FILENAME)
     ass.add_argument("--title", help="book title (also used by {title} in name patterns)")
+    ass.add_argument("--num-files", type=int, help="split the book into about this many files")
     _add_audio_flags(ass)
     _add_output_flags(ass)
 
@@ -223,9 +228,15 @@ def command_synthesize(args: argparse.Namespace) -> int:
             args.config,
             force=args.force,
             only=args.only,
+            start=args.start,
+            end=args.end,
+            count=args.count,
             overrides=_overrides_from_args(args),
             progress=on_progress,
         )
+    except SynthesisInProgress as exc:
+        print(f"Busy: {exc}", file=sys.stderr)
+        return 1
     except RuntimeError as exc:
         print(f"Engine error: {exc}", file=sys.stderr)
         return 1
@@ -237,15 +248,24 @@ def command_synthesize(args: argparse.Namespace) -> int:
     if not attempted:
         print("All chapters are already synthesized (use --force to regenerate).")
         return 0
-    print(f"Loaded tiny-voca ({result.sample_rate} Hz)")
-    print(f"Done. {result.synthesized} synthesized, {result.failed} failed.")
+    if result.sample_rate:
+        print(f"Loaded tiny-voca ({result.sample_rate} Hz)")
+    suffix = ", stopped early" if result.stopped else ""
+    print(f"Done. {result.synthesized} synthesized, {result.failed} failed{suffix}.")
     print(f"Assemble with: uv run kiku assemble --config {args.config}")
     return 1 if result.failed else 0
 
 
 def command_assemble(args: argparse.Namespace) -> int:
     try:
-        written = assemble_service(args.config, overrides=_overrides_from_args(args))
+        written = assemble_service(
+            args.config,
+            overrides=_overrides_from_args(args),
+            num_files=args.num_files,
+        )
+    except SynthesisInProgress as exc:
+        print(f"Busy: {exc}", file=sys.stderr)
+        return 1
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1

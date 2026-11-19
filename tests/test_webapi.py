@@ -13,6 +13,12 @@ from webapi.app import create_app
 BOOK = b"Chapter One\nHello world.\n\nChapter Two\nSecond text here.\n"
 
 
+class SlowEngine(FakeEngine):
+    def synthesize(self, text):
+        time.sleep(0.2)
+        return super().synthesize(text)
+
+
 class WebApiTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -106,6 +112,51 @@ class WebApiTest(unittest.TestCase):
         self.assertIn("data:", event_response.text)
         status = self.client.get(f"/api/projects/{project_id}").json()
         self.assertEqual(status["done"], 2)
+
+    def test_duplicate_synthesis_rejected(self):
+        project_id = self.create()
+        with patch("audiobook_creator.service.create_synthesizer", return_value=SlowEngine()):
+            first = self.client.post(f"/api/projects/{project_id}/synthesize", json={})
+            self.assertEqual(first.status_code, 200)
+            second = self.client.post(f"/api/projects/{project_id}/synthesize", json={})
+            self.assertEqual(second.status_code, 409)
+            self.assertEqual(second.json()["detail"]["job_id"], first.json()["job_id"])
+
+    def test_pause_resume_and_stop(self):
+        project_id = self.create()
+        with patch("audiobook_creator.service.create_synthesizer", return_value=SlowEngine()):
+            job_id = self.client.post(
+                f"/api/projects/{project_id}/synthesize", json={}
+            ).json()["job_id"]
+            time.sleep(0.05)
+            paused = self.client.post(f"/api/projects/{project_id}/jobs/{job_id}/pause")
+            self.assertEqual(paused.status_code, 200)
+            time.sleep(0.15)
+            state = self.client.get(f"/api/projects/{project_id}/jobs/{job_id}").json()
+            self.assertEqual(state["state"], "paused")
+            resumed = self.client.post(f"/api/projects/{project_id}/jobs/{job_id}/resume")
+            self.assertEqual(resumed.status_code, 200)
+            for _ in range(100):
+                state = self.client.get(f"/api/projects/{project_id}/jobs/{job_id}").json()
+                if state["state"] in ("done", "failed", "stopped"):
+                    break
+                time.sleep(0.02)
+            self.assertEqual(state["state"], "done")
+
+        with patch("audiobook_creator.service.create_synthesizer", return_value=SlowEngine()):
+            job_id = self.client.post(
+                f"/api/projects/{project_id}/synthesize",
+                json={"force": True},
+            ).json()["job_id"]
+            stopped = self.client.post(f"/api/projects/{project_id}/jobs/{job_id}/stop")
+            self.assertEqual(stopped.status_code, 200)
+            for _ in range(100):
+                state = self.client.get(f"/api/projects/{project_id}/jobs/{job_id}").json()
+                if state["state"] in ("done", "failed", "stopped"):
+                    break
+                time.sleep(0.02)
+            self.assertEqual(state["state"], "stopped")
+            self.assertTrue(state["result"]["stopped"])
 
     def test_assemble_and_audio(self):
         project_id = self.create()

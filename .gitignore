@@ -22,6 +22,7 @@ out/
 .env
 book.toml
 manifest.json
+.*.lock
 sample-book.txt
 dihtwyot/
 

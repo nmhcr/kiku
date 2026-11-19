@@ -142,9 +142,9 @@ uv run kiku assemble --config my-book/book.toml
 | --- | --- |
 | `init` | Create a project directory, config, manifest and directories. Reads EPUB title/author when `--title`/`--author` are omitted. |
 | `config` | Print effective settings, or persist changes to `book.toml`. |
-| `synthesize` | Synthesize pending chapters. `--force`, `--only N [N...]`, plus voice/engine flags. |
+| `synthesize` | Synthesize chapters. `--force`, `--only N [N...]`, `--from N`, `--to N`, `--count N`, plus voice/engine flags. |
 | `status` | Show per-chapter progress, duration and the output split plan. |
-| `assemble` | Join chapter clips into one or several files; audio/output flags. |
+| `assemble` | Join chapter clips into one or several files; `--num-files N` or audio/output flags. |
 | `voices` | List available tiny-voca voices. |
 
 Every config value can be overridden on the command line for a single run:
@@ -212,10 +212,21 @@ audio and preview voices. Interactive API docs are at `/docs`. Main endpoints:
 | `PATCH /api/projects/{id}` | Persist settings changes |
 | `POST /api/projects/{id}/synthesize` | Start a background job; returns a job id |
 | `GET /api/projects/{id}/jobs/{job}` | Poll job state/result |
+| `POST /api/projects/{id}/jobs/{job}/pause` | Pause between chapters |
+| `POST /api/projects/{id}/jobs/{job}/resume` | Resume a paused job |
+| `POST /api/projects/{id}/jobs/{job}/stop` | Stop after the current chapter |
 | `GET /api/projects/{id}/events?job_id=…` | Server-sent events with progress |
 | `POST /api/projects/{id}/assemble` | Assemble one or several audiobook files |
 | `GET /api/projects/{id}/audio/{file}` | Play/download a clip or finished file |
 | `POST /api/projects/{id}/preview` | Audition a sentence without rendering a book |
+
+Synthesis jobs are cooperative: pause/resume take effect between chapters, and
+stop finishes the current chapter before saving the manifest, so no audio is
+left half-written. Starting a second synthesis for a project while one is
+active returns HTTP 409 with the existing `job_id`; the web UI simply follows
+that job instead of duplicating work. A per-project lock file also prevents a
+CLI process and an API job from overlapping. Finished jobs and their progress
+events are pruned/bounded to keep memory usage stable.
 
 Projects live under `./projects/` by default; override with
 `AUDIOBOOK_PROJECTS_DIR`, and change the bind address with `AUDIOBOOK_HOST` /
@@ -327,6 +338,12 @@ uv run kiku synthesize --config book.toml
 
 # Or override just one run without touching the config:
 uv run kiku synthesize --config book.toml --voice F2 --pitch-range 1.2
+
+# A chapter range, limited to at most 10 chapters (in book order):
+uv run kiku synthesize --config book.toml --from 20 --to 40 --count 10
+
+# Assemble into roughly five files (chapters per file is derived automatically):
+uv run kiku assemble --config book.toml --num-files 5
 ```
 
 `config` and `status` both print the resulting output plan (file count and
