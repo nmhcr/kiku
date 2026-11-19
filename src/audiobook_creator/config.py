@@ -192,6 +192,39 @@ def settings_from_dict(data: dict[str, Any], base: Path) -> Settings:
     return settings
 
 
+_VOICE_FIELDS = frozenset(("voice", "speed", "pitch_shift", "pitch_range", "seed"))
+_AUDIO_FIELDS = frozenset(("chapter_gap_ms", "sample_rate", "output_format", "mp3_bitrate"))
+_OUTPUT_FIELDS = frozenset(("chapters_per_file", "name_pattern"))
+
+
+def apply_overrides(settings: Settings, values: dict[str, Any]) -> bool:
+    """Apply a dict of setting changes (``None`` values are ignored).
+
+    Both the CLI and the service layer use this, so overrides behave the same
+    way whichever frontend sets them.
+    """
+    changed = False
+    for attr, value in values.items():
+        if value is None:
+            continue
+        changed = True
+        if attr in _VOICE_FIELDS:
+            setattr(settings.voice, attr, value)
+        elif attr in _AUDIO_FIELDS:
+            setattr(settings.audio, attr, value)
+        elif attr in _OUTPUT_FIELDS:
+            setattr(settings.output_options, attr, value)
+        elif attr == "checkpoint":
+            settings.checkpoint = Path(value).expanduser().resolve()
+        elif attr == "output":
+            settings.output = Path(value).expanduser().resolve()
+        elif attr == "source":
+            settings.source = Path(value).expanduser().resolve()
+        else:
+            setattr(settings, attr, value)
+    return changed
+
+
 def load_settings(path: str | Path = CONFIG_FILENAME) -> tuple[Settings, Path]:
     """Load a project config. Returns ``(settings, config_path)``."""
     config_path = Path(path).expanduser().resolve()

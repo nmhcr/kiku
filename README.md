@@ -163,7 +163,8 @@ tts-audiobook/
 ├── scripts/setup.sh            # env, install, weights download
 ├── examples/sample-book.txt    # sample source text
 ├── src/audiobook_creator/
-│   ├── cli.py                  # argparse CLI entry point
+│   ├── cli.py                  # argparse CLI (presentation only)
+│   ├── service.py              # application functions for any frontend
 │   ├── config.py               # book.toml data model + loader
 │   ├── book.py                 # source dispatch + chapter splitting
 │   ├── epub.py                 # EPUB reader (stdlib zipfile/XML)
@@ -185,6 +186,26 @@ my-book/
 ├── audio/            # chapter_0001.wav, chapter_0002.wav, ...
 └── out/audiobook.wav
 ```
+
+## Service layer
+
+`service.py` holds the application logic as plain functions that take paths
+and data and return structured, JSON-friendly results. It has no argparse and
+no printing, so the CLI and a future local web/desktop frontend can share it:
+
+| Function | Purpose |
+| --- | --- |
+| `create_project()` | Load EPUB/txt, copy the source, write config + manifest |
+| `get_settings()` / `update_settings()` | Read or persist `book.toml` |
+| `list_chapters()` / `get_status()` | Chapter list, progress, total duration, output plan |
+| `synthesize()` | Render chapters, update manifest, emit `SynthProgress` events |
+| `assemble()` | Stream audio to one or several files, return `OutputFile` records |
+| `preview_voice()` | Synthesize one sentence to audition a voice |
+
+Long-running work reports progress through callbacks: the CLI prints lines,
+while a web UI can turn the same events into WebSocket/SSE messages. Errors are
+raised as exceptions, leaving presentation to the caller. The CLI commands now
+delegate to these functions; existing command behavior is unchanged.
 
 ## Configuration (`book.toml`)
 
