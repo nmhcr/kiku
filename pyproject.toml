@@ -19,6 +19,9 @@ dependencies = [
 # Installs the tiny-voca engine and its "own" phonemizer front end.
 # The weights and DIZIONE_DATA still need to be set up (see README / scripts/setup.sh).
 engine = [
+  # Declared directly so uv's CPU-only index mapping in [tool.uv.sources]
+  # applies to it (uv does not override transitive dependencies).
+  "torch>=2.4,<3",
   "tiny-voca[own] @ git+https://github.com/n4ze3m/tiny-voca.git",
 ]
 dev = [

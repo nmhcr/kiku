@@ -12,13 +12,17 @@ venv/
 vendor/
 weights/
 
-# Generated audiobook artifacts.
+# Generated audiobook artifacts and local book copies.
 audio/
 out/
 *.wav
 *.mp3
+*.epub
+*.pdf
 .env
 book.toml
-manifest.json   
+manifest.json
 sample-book.txt
-uv.lock
+dihtwyot/
+
+# uv.lock is intentionally tracked for reproducible installs.

@@ -57,9 +57,9 @@ PY
 export DIZIONE_DATA="$PWD/weights/phonemizer"
 ```
 
-Commit `uv.lock` for reproducible installs. The engine is installed from tiny-voca's
-git repository, so `git` must be available. To opt into a CUDA build of torch,
-remove the `[[tool.uv.index]]` and `[tool.uv.sources]` sections in `pyproject.toml`.
+`uv.lock` is committed so installs are reproducible; it pins torch to the
+CPU-only build and contains no CUDA packages. The engine is installed from
+tiny-voca's git repository, so `git` must be available.
 
 > tiny-voca is English only and has two fixed voices. Foreign names and unusual
 > spellings are often mispronounced. See the
@@ -86,6 +86,22 @@ uv run audiobook-creator status --config my-book/book.toml
 Scanned/image PDFs and other formats are not supported yet; convert them to
 text first (or ask for PDF support, which would need an optional extraction
 dependency).
+
+## Edge devices
+
+The default setup is deliberately CPU-only and lightweight:
+
+- **Requirements**: Python 3.11+, ~1 GB RAM for synthesis, no GPU.
+- **Footprint**: CPU torch wheel, numpy, soundfile, the 5.4 MB dizione data and
+  the 18 MB checkpoint — no CUDA libraries, no network access at runtime.
+- **Memory**: assembly streams one chapter at a time, so even a 16-hour book
+  uses roughly one chapter of RAM, not the whole audiobook.
+- **Speed**: tiny-voca is around 70x real time on four CPU threads; slower
+  boards are still fine for unattended batch rendering.
+
+Synthesis uses `device = "cpu"` in `book.toml`. A future ONNX Runtime backend
+is the path to phone/browser use without torch at all (21 MB ONNX model plus a
+small runtime).
 
 ## Quickstart
 
