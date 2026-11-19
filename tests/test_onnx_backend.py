@@ -1,5 +1,6 @@
 import importlib.util
 import os
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -29,6 +30,28 @@ class BackendSelectionTest(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             settings_from_dict({"book": {"title": "x"}, "engine": {"backend": "x"}}, Path("."))
+
+
+class PhonemizerDetectionTest(unittest.TestCase):
+    def test_detected_from_weights_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            weights = Path(tmp) / "weights"
+            (weights / "phonemizer").mkdir(parents=True)
+            settings = Settings(title="x", checkpoint=weights / "tiny-voca.pt")
+            with patch.dict(os.environ, {}, clear=True):
+                create_synthesizer(settings)
+                self.assertEqual(
+                    os.environ["DIZIONE_DATA"], str((weights / "phonemizer").resolve())
+                )
+
+    def test_explicit_env_wins(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            weights = Path(tmp) / "weights"
+            (weights / "phonemizer").mkdir(parents=True)
+            settings = Settings(title="x", checkpoint=weights / "tiny-voca.pt")
+            with patch.dict(os.environ, {"DIZIONE_DATA": "/custom/data"}):
+                create_synthesizer(settings)
+                self.assertEqual(os.environ["DIZIONE_DATA"], "/custom/data")
 
 
 @unittest.skipUnless(HAS_ONNX, "ONNX Runtime or ONNX weights are not installed")

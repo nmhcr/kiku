@@ -48,9 +48,19 @@ class WebApiTest(unittest.TestCase):
         return job_id, job
 
     def test_index_and_docs(self):
-        self.assertEqual(self.client.get("/").json()["name"], "Audiobook Creator API")
-        self.assertEqual(self.client.get("/docs").status_code, 200)
-        self.assertEqual(self.client.get("/static/index.html").status_code, 200)
+        index = self.client.get("/")
+        self.assertEqual(index.status_code, 200)
+        self.assertIn("Kiku", index.text)
+        self.assertIn("/static/app.js", index.text)
+        for path in ("/static/app.js", "/static/style.css", "/static/index.html", "/docs"):
+            self.assertEqual(self.client.get(path).status_code, 200, path)
+
+    def test_get_settings(self):
+        project_id = self.create()
+        response = self.client.get(f"/api/projects/{project_id}/settings")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["title"], "API Book")
+        self.assertEqual(response.json()["voice"]["voice"], "F2")
 
     def test_create_and_status(self):
         project_id = self.create()
@@ -118,7 +128,8 @@ class WebApiTest(unittest.TestCase):
         project_id = self.create()
         with patch("audiobook_creator.service.create_synthesizer", return_value=FakeEngine()):
             response = self.client.post(
-                f"/api/projects/{project_id}/preview", json={"text": "Hello there"}
+                f"/api/projects/{project_id}/preview",
+                json={"text": "Hello there", "voice": "M2"},
             )
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.headers["content-type"].startswith("audio/"))

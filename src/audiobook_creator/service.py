@@ -397,8 +397,14 @@ def assemble(
     return written
 
 
-def preview_voice(config: str | Path, text: str) -> tuple[np.ndarray, int]:
+def preview_voice(
+    config: str | Path,
+    text: str,
+    overrides: dict[str, Any] | None = None,
+) -> tuple[np.ndarray, int]:
     """Synthesize one sentence for auditioning a voice without rendering a book."""
     settings = get_settings(config)
+    apply_overrides(settings, overrides or {})
+    settings.validate()
     engine = create_synthesizer(settings).load()
     return engine.synthesize(text), engine.sample_rate

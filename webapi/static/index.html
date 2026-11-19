@@ -3,12 +3,136 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Audiobook Creator API</title>
+  <title>Kiku (聞く) — local audiobook creator</title>
+  <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <h1>Audiobook Creator API</h1>
-  <p>Stage one: local HTTP API. A full web interface comes next.</p>
-  <p>Interactive docs: <a href="/docs">/docs</a></p>
-  <p>Projects: <a href="/api/projects">/api/projects</a></p>
+  <header class="masthead">
+    <div>
+      <h1>Kiku <span lang="ja">聞く</span></h1>
+      <p class="tagline"><em>kiku</em> — "to hear". A local audiobook creator powered by tiny-voca.</p>
+    </div>
+    <a class="link-button" href="/docs">API docs ↗</a>
+  </header>
+
+  <div id="banner" class="banner" role="status" hidden></div>
+
+  <main class="layout">
+    <div class="column">
+      <section class="card">
+        <h2>New project</h2>
+        <form id="new-project-form">
+          <label>Source file
+            <input id="np-file" type="file" accept=".txt,.md,.epub" required>
+          </label>
+          <div class="grid-2">
+            <label>Title<input id="np-title" required placeholder="Book title"></label>
+            <label>Author<input id="np-author" placeholder="Optional"></label>
+          </div>
+          <div class="grid-2">
+            <label>Voice
+              <select id="np-voice">
+                <option value="F2">F2 (female)</option>
+                <option value="M2">M2 (male)</option>
+              </select>
+            </label>
+            <label>Speed<input id="np-speed" type="number" min="0.5" max="2" step="0.05" value="1"></label>
+          </div>
+          <div class="grid-2">
+            <label>Chapter gap (ms)<input id="np-gap" type="number" min="0" step="100" value="700"></label>
+            <label>Chapters per file<input id="np-split" value="all" placeholder="all or a number"></label>
+          </div>
+          <label>Name pattern<input id="np-pattern" placeholder="{title} - {chapter}"></label>
+          <button type="submit">Create project</button>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>Settings</h2>
+        <p class="muted" id="settings-hint">Select a project to edit its settings.</p>
+        <form id="settings-form" hidden>
+          <div class="grid-2">
+            <label>Title<input id="st-title"></label>
+            <label>Author<input id="st-author"></label>
+          </div>
+          <div class="grid-2">
+            <label>Voice
+              <select id="st-voice">
+                <option value="F2">F2 (female)</option>
+                <option value="M2">M2 (male)</option>
+              </select>
+            </label>
+            <label>Backend
+              <select id="st-backend">
+                <option value="onnx">onnx</option>
+                <option value="torch">torch</option>
+              </select>
+            </label>
+          </div>
+          <div class="grid-3">
+            <label>Speed<input id="st-speed" type="number" step="0.05"></label>
+            <label>Pitch shift<input id="st-pitch-shift" type="number" step="0.01"></label>
+            <label>Pitch range<input id="st-pitch-range" type="number" step="0.05"></label>
+          </div>
+          <div class="grid-3">
+            <label>Seed<input id="st-seed" type="number" step="1"></label>
+            <label>Gap (ms)<input id="st-gap" type="number" min="0" step="100"></label>
+            <label>Sample rate<input id="st-sample-rate" type="number" step="1000"></label>
+          </div>
+          <div class="grid-2">
+            <label>Format
+              <select id="st-format"><option value="wav">wav</option><option value="mp3">mp3</option></select>
+            </label>
+            <label>MP3 bitrate<input id="st-bitrate"></label>
+          </div>
+          <div class="grid-2">
+            <label>Chapters per file<input id="st-split" placeholder="all or a number"></label>
+            <label>Name pattern<input id="st-pattern" placeholder="{title} - {chapter}"></label>
+          </div>
+          <div class="grid-2">
+            <label>Device<input id="st-device"></label>
+            <label>Chapter pattern<input id="st-chapter-pattern"></label>
+          </div>
+          <button type="submit">Save settings</button>
+        </form>
+      </section>
+    </div>
+
+    <div class="column">
+      <section class="card">
+        <h2>Projects</h2>
+        <div id="project-list" class="project-list"><p class="muted">No projects yet.</p></div>
+      </section>
+
+      <section class="card">
+        <h2>Project detail</h2>
+        <div id="detail-empty" class="muted">Create or select a project to begin.</div>
+        <div id="detail" hidden>
+          <div id="summary" class="summary"></div>
+          <div class="actions">
+            <button id="btn-synthesize">Synthesize</button>
+            <label class="inline"><input id="chk-force" type="checkbox"> Force</label>
+            <button id="btn-assemble" class="secondary">Assemble</button>
+          </div>
+          <div id="progress-wrap" hidden>
+            <div id="progress-label" class="muted">Working…</div>
+            <div class="progress"><i id="progress-bar"></i></div>
+          </div>
+          <h3>Chapters</h3>
+          <div id="chapter-list" class="chapter-list"></div>
+          <h3>Output files</h3>
+          <div id="output-list" class="output-list"><p class="muted">Not assembled yet.</p></div>
+          <h3>Preview a voice</h3>
+          <div class="preview-row">
+            <input id="preview-text" placeholder="Type a sentence to audition">
+            <button id="btn-preview" class="secondary">Preview</button>
+          </div>
+          <audio id="preview-audio" controls hidden></audio>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script src="/static/app.js"></script>
 </body>
 </html>

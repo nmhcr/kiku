@@ -1,4 +1,4 @@
-"""Command line interface: ``audiobook-creator`` or ``python -m audiobook_creator``.
+"""Command line interface: ``kiku`` or ``python -m audiobook_creator``.
 
 The CLI is a thin presentation layer: it parses flags and formats output, while
 all application logic lives in :mod:`audiobook_creator.service`.
@@ -68,7 +68,7 @@ def _add_output_flags(parser: argparse.ArgumentParser) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="audiobook-creator",
+        prog="kiku",
         description="Create an audiobook from a text file using tiny-voca.",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -175,7 +175,7 @@ def command_init(args: argparse.Namespace) -> int:
     print(f"Created project at {project.config_path.parent}")
     print(f"Output plan: {_describe_plan(project.output_plan)}")
     print("Next: set up the engine (scripts/setup.sh), then:")
-    print(f"  uv run audiobook-creator synthesize --config {project.config_path}")
+    print(f"  uv run kiku synthesize --config {project.config_path}")
     return 0
 
 
@@ -239,7 +239,7 @@ def command_synthesize(args: argparse.Namespace) -> int:
         return 0
     print(f"Loaded tiny-voca ({result.sample_rate} Hz)")
     print(f"Done. {result.synthesized} synthesized, {result.failed} failed.")
-    print(f"Assemble with: uv run audiobook-creator assemble --config {args.config}")
+    print(f"Assemble with: uv run kiku assemble --config {args.config}")
     return 1 if result.failed else 0
 
 

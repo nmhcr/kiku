@@ -61,7 +61,8 @@ class OnnxSynthesizer:
             ) from exc
         if not os.environ.get("DIZIONE_DATA"):
             raise RuntimeError(
-                "DIZIONE_DATA is not set; export DIZIONE_DATA=<weights>/phonemizer"
+                "dizione data not found: neither DIZIONE_DATA nor "
+                f"{self.checkpoint.parent / 'phonemizer'} is available"
             )
 
         self._config = json.loads(self.config_path.read_text(encoding="utf-8"))

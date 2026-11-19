@@ -81,7 +81,7 @@ def create_app(projects_dir: str | Path | None = None) -> FastAPI:
     root = Path(
         projects_dir or os.environ.get("AUDIOBOOK_PROJECTS_DIR", Path.cwd() / "projects")
     ).expanduser()
-    app = FastAPI(title="Audiobook Creator API", version="1.0")
+    app = FastAPI(title="Kiku (聞く, kiku) API", version="1.0")
     app.state.registry = Registry(root)
     app.state.jobs: dict[str, Job] = {}
     app.state.tasks: dict[str, asyncio.Task] = {}
@@ -92,11 +92,12 @@ def create_app(projects_dir: str | Path | None = None) -> FastAPI:
 
     @app.get("/")
     def index():
+        if static_dir.is_dir():
+            return FileResponse(static_dir / "index.html", media_type="text/html")
         return {
-            "name": "Audiobook Creator API",
+            "name": "Kiku (聞く, kiku) API",
             "docs": "/docs",
             "projects": "/api/projects",
-            "static_ui": "/static/index.html" if static_dir.is_dir() else None,
         }
 
     @app.post("/api/projects")
@@ -163,11 +164,22 @@ def create_app(projects_dir: str | Path | None = None) -> FastAPI:
 
     @app.get("/api/projects")
     def list_projects():
-        return _response({"projects": app.state.registry.list()})
+        projects = []
+        for entry in app.state.registry.list():
+            try:
+                settings = service.get_settings(entry["config_path"])
+                projects.append({**entry, "title": settings.title})
+            except (FileNotFoundError, ValueError):
+                projects.append(entry)
+        return _response({"projects": projects})
 
     @app.get("/api/projects/{project_id}")
     def status(project_id: str, request: Request):
         return _response(service.get_status(_config(request, project_id)))
+
+    @app.get("/api/projects/{project_id}/settings")
+    def project_settings(project_id: str, request: Request):
+        return _response(service.get_settings(_config(request, project_id)))
 
     @app.patch("/api/projects/{project_id}")
     async def update(project_id: str, request: Request, changes: dict[str, Any]):
@@ -297,8 +309,9 @@ def create_app(projects_dir: str | Path | None = None) -> FastAPI:
         text = str(payload.get("text") or "").strip()
         if not text:
             raise HTTPException(status_code=400, detail="text is required")
+        overrides = {key: value for key, value in payload.items() if key != "text"}
         try:
-            wave, rate = service.preview_voice(config, text)
+            wave, rate = service.preview_voice(config, text, overrides)
         except (RuntimeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         path = config.parent / f"preview-{uuid.uuid4().hex[:8]}.wav"

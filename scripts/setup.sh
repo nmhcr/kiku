@@ -29,9 +29,8 @@ fi
 
 echo
 echo "Setup complete. The environment is at $ROOT/.venv"
-echo "Before synthesizing, point tiny-voca at the phonemizer data:"
-echo "  export DIZIONE_DATA=$ROOT/weights/phonemizer"
+echo "The phonemizer data path is detected automatically from the weights directory."
 echo
 echo "Then, for example:"
-echo "  uv run audiobook-creator init --source examples/sample-book.txt --title 'My Book'"
-echo "  uv run audiobook-creator synthesize --config my-book/book.toml"
+echo "  uv run kiku init --source examples/sample-book.txt --title 'My Book'"
+echo "  uv run kiku synthesize --config my-book/book.toml"

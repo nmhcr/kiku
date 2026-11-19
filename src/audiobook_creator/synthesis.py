@@ -19,11 +19,26 @@ class EngineError(RuntimeError):
     """Raised when the tiny-voca engine is missing or misconfigured."""
 
 
+def _ensure_phonemizer_data(checkpoint: Path) -> None:
+    """Point dizione at its data when it sits beside the checkpoint.
+
+    Both backends import dizione lazily, so setting the variable here makes
+    the phonemizer work without a manual ``export`` in the user's shell. An
+    explicit DIZIONE_DATA always wins.
+    """
+    if os.environ.get("DIZIONE_DATA"):
+        return
+    candidate = checkpoint.parent / "phonemizer"
+    if candidate.is_dir():
+        os.environ["DIZIONE_DATA"] = str(candidate.resolve())
+
+
 def create_synthesizer(settings: Settings):
     """Build the synthesizer for the configured backend.
 
     Both backends expose ``load()``, ``sample_rate`` and ``synthesize(text)``.
     """
+    _ensure_phonemizer_data(settings.checkpoint)
     if settings.backend == "onnx":
         from .onnx_backend import OnnxSynthesizer
 

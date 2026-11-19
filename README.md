@@ -1,6 +1,7 @@
-# tts-audiobook
+# Kiku (聞く, kiku)
 
-A tool for turning a text book into an audiobook, using
+**Kiku** (聞く, romaji *kiku*, Japanese for "to hear") is a local tool for
+turning a text book into an audiobook, using
 [tiny-voca](https://github.com/n4ze3m/tiny-voca) as the text-to-speech engine.
 tiny-voca is a small (4.5M parameter), CPU-friendly, English-only model with
 two voices.
@@ -28,6 +29,7 @@ two voices.
 ## Install
 
 Requires Python 3.11–3.14 and [uv](https://docs.astral.sh/uv/).
+The old command names `audiobook-creator` and `audiobook-api` remain as aliases.
 
 The one-shot script creates `.venv`, installs the lightweight ONNX backend,
 and downloads the model:
@@ -52,10 +54,11 @@ snapshot_download(
     allow_patterns=["config.json", "onnx/model.onnx", "phonemizer/*"],
 )
 PY
-
-# Tell the phonemizer where its data lives.
-export DIZIONE_DATA="$PWD/weights/phonemizer"
 ```
+
+The phonemizer data path is detected automatically from the weights directory,
+so no `DIZIONE_DATA` export is needed. Set it yourself only if the data lives
+elsewhere.
 
 `uv.lock` is committed for reproducible installs. To use the legacy torch
 backend instead, run `uv sync --extra engine --extra dev`, download
@@ -81,8 +84,8 @@ the project, so generated projects are self-contained:
 
 ```bash
 # --title / --author are optional for EPUB: metadata is used when omitted.
-uv run audiobook-creator init --source book.epub --dir my-book
-uv run audiobook-creator status --config my-book/book.toml
+uv run kiku init --source book.epub --dir my-book
+uv run kiku status --config my-book/book.toml
 ```
 
 Scanned/image PDFs and other formats are not supported yet; convert them to
@@ -110,25 +113,24 @@ apps. The torch backend remains available via `--backend torch` if needed.
 
 ```bash
 # 1. Create a project from a source text.
-uv run audiobook-creator init \
+uv run kiku init \
   --source examples/sample-book.txt \
   --title "My First Audiobook" \
   --author "Me" \
   --dir my-book
 
 # 2. Adjust settings by editing my-book/book.toml or from the CLI:
-uv run audiobook-creator config --config my-book/book.toml \
+uv run kiku config --config my-book/book.toml \
   --voice F2 --speed 1.0 --chapter-gap-ms 700 --chapters-per-file all
 #    `init` anchors the weights path absolutely when the model assets exist
 #    relative to your current directory; otherwise set `engine.checkpoint`.
 
 # 3. Synthesize chapters (safe to re-run; resumes where it stopped).
-export DIZIONE_DATA="$PWD/weights/phonemizer"
-uv run audiobook-creator synthesize --config my-book/book.toml
+uv run kiku synthesize --config my-book/book.toml
 
 # 4. Check progress, then build the final file.
-uv run audiobook-creator status --config my-book/book.toml
-uv run audiobook-creator assemble --config my-book/book.toml
+uv run kiku status --config my-book/book.toml
+uv run kiku assemble --config my-book/book.toml
 ```
 
 `uv run` uses the project's `.venv` automatically. The module form also works:
@@ -158,7 +160,7 @@ Every config value can be overridden on the command line for a single run:
 ## Project layout
 
 ```
-tts-audiobook/
+kiku/
 ├── pyproject.toml
 ├── scripts/setup.sh            # env, install, weights download
 ├── examples/sample-book.txt    # sample source text
@@ -194,17 +196,19 @@ processing stays on your machine. Install the web extra and run it:
 
 ```bash
 uv sync --extra onnx --extra web --extra dev
-export DIZIONE_DATA="$PWD/weights/phonemizer"
-uv run python -m webapi        # or: uv run audiobook-api
+uv run kiku-api        # or: uv run python -m webapi
 ```
 
-Interactive docs are at `/docs`. Main endpoints:
+Open **http://127.0.0.1:8000/** for the built-in vanilla JS interface: create a
+project, edit settings, synthesize with live progress, assemble, play/download
+audio and preview voices. Interactive API docs are at `/docs`. Main endpoints:
 
 | Endpoint | Purpose |
 | --- | --- |
 | `POST /api/projects` | Upload `.txt`/`.md`/`.epub` with optional settings; returns a project id |
 | `GET /api/projects` | List local projects |
 | `GET /api/projects/{id}` | Status, chapters and output plan |
+| `GET /api/projects/{id}/settings` | Current settings (used by the UI form) |
 | `PATCH /api/projects/{id}` | Persist settings changes |
 | `POST /api/projects/{id}/synthesize` | Start a background job; returns a job id |
 | `GET /api/projects/{id}/jobs/{job}` | Poll job state/result |
@@ -215,8 +219,8 @@ Interactive docs are at `/docs`. Main endpoints:
 
 Projects live under `./projects/` by default; override with
 `AUDIOBOOK_PROJECTS_DIR`, and change the bind address with `AUDIOBOOK_HOST` /
-`AUDIOBOOK_PORT`. A minimal placeholder page is at `/static/index.html`; a full
-web interface will replace it in stage two.
+`AUDIOBOOK_PORT`. The UI is plain HTML/CSS/JS with no build step, served from
+`webapi/static/`.
 
 ## Service layer
 
@@ -306,23 +310,23 @@ Examples:
 
 ```bash
 # One big book, custom name: out/My Book - all.wav
-uv run audiobook-creator config --config book.toml \
+uv run kiku config --config book.toml \
   --chapters-per-file all --name-pattern "{title} - {chapter}"
 
 # Ten chapters per file: out/My Book - 1.wav ... out/My Book - 8.wav
-uv run audiobook-creator config --config book.toml \
+uv run kiku config --config book.toml \
   --chapters-per-file 10 --name-pattern "{title} - {chapter}"
 
 # One-off override for a single assembly, by chapter ranges:
-uv run audiobook-creator assemble --config book.toml \
+uv run kiku assemble --config book.toml \
   --chapters-per-file 10 --name-pattern "{title}_{range}"
 
 # Change voice and pacing, then synthesize:
-uv run audiobook-creator config --config book.toml --voice M2 --speed 1.1
-uv run audiobook-creator synthesize --config book.toml
+uv run kiku config --config book.toml --voice M2 --speed 1.1
+uv run kiku synthesize --config book.toml
 
 # Or override just one run without touching the config:
-uv run audiobook-creator synthesize --config book.toml --voice F2 --pitch-range 1.2
+uv run kiku synthesize --config book.toml --voice F2 --pitch-range 1.2
 ```
 
 `config` and `status` both print the resulting output plan (file count and

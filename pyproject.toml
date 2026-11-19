@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "tts-audiobook"
+name = "kiku"
 version = "0.1.0"
-description = "Audiobook creator scaffold powered by tiny-voca"
+description = "Kiku (聞く, kiku - 'to hear'): a local audiobook creator powered by tiny-voca"
 readme = "README.md"
 requires-python = ">=3.11,<3.15"  # onnxruntime has no CPython 3.15 wheels yet
 license = { text = "Apache-2.0" }
@@ -42,11 +42,15 @@ dev = [
 ]
 
 [project.scripts]
+kiku = "audiobook_creator.cli:main"
+kiku-api = "webapi.app:main"
+# Legacy aliases.
 audiobook-creator = "audiobook_creator.cli:main"
 audiobook-api = "webapi.app:main"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["src", "."]
+include = ["audiobook_creator*", "webapi*"]
 
 [tool.setuptools.package-data]
 audiobook_creator = ["py.typed"]
