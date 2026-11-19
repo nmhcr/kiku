@@ -214,8 +214,8 @@ function finishJob(message, kind = "info") {
   state.jobId = null;
   setJobState(null);
   banner(message, kind);
-  refreshStatus().catch(() => {});
-  refreshProjects().catch(() => {});
+  // Chapter rows and the progress bar were already updated from SSE events
+  // in the browser; no server round-trip is needed to show completion.
 }
 
 function updateProgress() {
@@ -273,8 +273,7 @@ function startEvents(jobId) {
     events.close();
     state.eventSource = null;
     $("progress-wrap").hidden = true;
-    banner("Progress stream disconnected; refresh to check status.", "error");
-    refreshStatus().catch(() => {});
+    banner("Progress stream disconnected. Select the project again to reload its state.", "error");
   };
 }
 
