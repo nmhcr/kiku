@@ -187,6 +187,37 @@ my-book/
 └── out/audiobook.wav
 ```
 
+## Local API (stage one)
+
+A FastAPI app exposes the service layer on `127.0.0.1:8000` by default — all
+processing stays on your machine. Install the web extra and run it:
+
+```bash
+uv sync --extra onnx --extra web --extra dev
+export DIZIONE_DATA="$PWD/weights/phonemizer"
+uv run python -m webapi        # or: uv run audiobook-api
+```
+
+Interactive docs are at `/docs`. Main endpoints:
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /api/projects` | Upload `.txt`/`.md`/`.epub` with optional settings; returns a project id |
+| `GET /api/projects` | List local projects |
+| `GET /api/projects/{id}` | Status, chapters and output plan |
+| `PATCH /api/projects/{id}` | Persist settings changes |
+| `POST /api/projects/{id}/synthesize` | Start a background job; returns a job id |
+| `GET /api/projects/{id}/jobs/{job}` | Poll job state/result |
+| `GET /api/projects/{id}/events?job_id=…` | Server-sent events with progress |
+| `POST /api/projects/{id}/assemble` | Assemble one or several audiobook files |
+| `GET /api/projects/{id}/audio/{file}` | Play/download a clip or finished file |
+| `POST /api/projects/{id}/preview` | Audition a sentence without rendering a book |
+
+Projects live under `./projects/` by default; override with
+`AUDIOBOOK_PROJECTS_DIR`, and change the bind address with `AUDIOBOOK_HOST` /
+`AUDIOBOOK_PORT`. A minimal placeholder page is at `/static/index.html`; a full
+web interface will replace it in stage two.
+
 ## Service layer
 
 `service.py` holds the application logic as plain functions that take paths

@@ -29,19 +29,28 @@ onnx = [
   "onnxruntime>=1.20,<2",
   "dizione @ git+https://github.com/n4ze3m/dizione.git",
 ]
+# Local HTTP API (binds to 127.0.0.1 by default).
+web = [
+  "fastapi>=0.110,<1",
+  "uvicorn>=0.27,<1",
+  "python-multipart>=0.0.9",  # file uploads
+]
 dev = [
   "pytest>=7,<9",
   "huggingface-hub>=0.34,<3",  # used by scripts/setup.sh to fetch the weights
+  "httpx>=0.27,<1",            # FastAPI's TestClient
 ]
 
 [project.scripts]
 audiobook-creator = "audiobook_creator.cli:main"
+audiobook-api = "webapi.app:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
 audiobook_creator = ["py.typed"]
+webapi = ["static/*"]
 
 # uv: use the CPU-only PyTorch build. The default PyPI wheel on Linux pulls
 # about 3 GB of CUDA libraries that this CPU-only project never uses.
