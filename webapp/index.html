@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kiku (聞く) — browser audiobook creator</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <header class="masthead">
+    <div>
+      <h1>Kiku <span lang="ja">聞く</span></h1>
+      <p class="tagline"><em>kiku</em> — "to hear". Turns a book into an audiobook, entirely in your browser.</p>
+    </div>
+    <span class="browser-badge">No server · No uploads · Private</span>
+  </header>
+
+  <main class="page">
+    <section class="card guide">
+      <h2>How it works</h2>
+      <ol>
+        <li><strong>Create</strong> a project: choose a .txt, .md or .epub book and give it a title.</li>
+        <li><strong>Adjust</strong> the voice, pacing, chapter gaps and how the audio is split.</li>
+        <li><strong>Synthesize</strong> chapters. Each chapter becomes one audio clip; progress is resumable.</li>
+        <li><strong>Assemble</strong> the finished chapters into one file, or several by chapter count.</li>
+      </ol>
+      <p class="muted">The first visit downloads an 8 MB speech engine, then works offline. Everything stays in this
+        browser's storage — no text or audio is ever uploaded. Keep this tab open while synthesizing.</p>
+    </section>
+
+    <div class="banner" id="banner" role="status" hidden></div>
+    <div class="engine-status" id="engine-status" role="status" hidden>
+      <span id="engine-label">Loading the speech engine…</span>
+      <span class="progress"><i id="engine-bar"></i></span>
+    </div>
+
+    <section class="top-grid">
+      <div class="card">
+        <h2>New project</h2>
+        <form id="new-project-form">
+          <div class="grid-2">
+            <label>Source file<input id="np-file" type="file" accept=".txt,.md,.epub" required></label>
+            <label>Title <span class="hint">optional for EPUB</span><input id="np-title" placeholder="Book title"></label>
+          </div>
+          <div class="grid-2">
+            <label>Author <span class="hint">optional</span><input id="np-author" placeholder="Author name"></label>
+            <label>Voice
+              <select id="np-voice">
+                <option value="F2">F2 — female</option>
+                <option value="M2">M2 — male</option>
+              </select>
+            </label>
+          </div>
+          <div class="grid-3">
+            <label>Speed<input id="np-speed" type="number" min="0.5" max="2" step="0.05" value="1"></label>
+            <label>Chapter gap (ms)<input id="np-gap" type="number" min="0" step="100" value="700"></label>
+            <label>Chapters per file<input id="np-split" value="all" placeholder="all or a number"></label>
+          </div>
+          <label>Name pattern <span class="hint">optional</span><input id="np-pattern" placeholder="{title} - {chapter}"></label>
+          <button type="submit">Create project</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>Settings</h2>
+        <p class="muted" id="settings-hint">Select a project to edit its settings.</p>
+        <form id="settings-form" hidden>
+          <div class="grid-2">
+            <label>Title<input id="st-title"></label>
+            <label>Author<input id="st-author"></label>
+          </div>
+          <div class="grid-2">
+            <label>Voice
+              <select id="st-voice">
+                <option value="F2">F2 — female</option>
+                <option value="M2">M2 — male</option>
+              </select>
+            </label>
+            <label>Audio format<select id="st-format"><option value="wav">wav</option></select></label>
+          </div>
+          <details class="advanced" open>
+            <summary>Voice &amp; pacing</summary>
+            <div class="grid-3">
+              <label>Speed<input id="st-speed" type="number" min="0.5" max="2" step="0.05"></label>
+              <label>Pitch shift<input id="st-pitch-shift" type="number" step="0.01"></label>
+              <label>Pitch range<input id="st-pitch-range" type="number" step="0.05"></label>
+            </div>
+            <div class="grid-3">
+              <label>Seed<input id="st-seed" type="number" step="1"></label>
+              <label>Gap (ms)<input id="st-gap" type="number" min="0" step="100"></label>
+              <label>Chapters per file<input id="st-split" placeholder="all or a number"></label>
+            </div>
+          </details>
+          <details class="advanced">
+            <summary>Output &amp; chapter detection</summary>
+            <label>Name pattern<input id="st-pattern" placeholder="{title} - {chapter}"></label>
+            <p class="hint block">Placeholders: {title}, {chapter} (part number or "all"), {range} (e.g. 001-010).</p>
+            <label>Chapter pattern (regular expression)<input id="st-chapter-pattern"></label>
+            <p class="hint block">Lines matching this are chapter headings; the first capture group is the title.</p>
+          </details>
+          <button type="submit">Save settings</button>
+        </form>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Projects</h2>
+      <div id="project-list" class="project-list"><p class="muted">No projects yet.</p></div>
+    </section>
+
+    <section class="card">
+      <h2>Project detail</h2>
+      <div id="detail-empty" class="muted">Create or select a project to begin.</div>
+      <div id="detail" hidden>
+        <div id="summary" class="summary"></div>
+        <div class="detail-grid">
+          <div>
+            <div class="controls">
+              <button id="btn-synthesize">Synthesize</button>
+              <label class="inline"><input id="chk-force" type="checkbox"> Force</label>
+              <button id="btn-assemble" class="secondary">Assemble</button>
+            </div>
+            <div class="grid-3">
+              <label>From chapter<input id="syn-from" type="number" min="1" placeholder="all"></label>
+              <label>To chapter<input id="syn-to" type="number" min="1" placeholder="all"></label>
+              <label>Count<input id="syn-count" type="number" min="1" placeholder="all"></label>
+            </div>
+            <div class="job-actions">
+              <button id="btn-pause" class="secondary" disabled>Pause</button>
+              <button id="btn-resume" class="secondary" disabled>Resume</button>
+              <button id="btn-stop" class="secondary" disabled>Stop</button>
+            </div>
+            <div id="progress-wrap" hidden>
+              <div id="progress-label" class="muted">Working…</div>
+              <div class="progress"><i id="progress-bar"></i></div>
+            </div>
+          </div>
+          <div>
+            <h3>Output files</h3>
+            <label>Number of output files (optional)<input id="asm-num-files" type="number" min="1" placeholder="e.g. 5"></label>
+            <div id="output-list" class="output-list"><p class="muted">Not assembled yet.</p></div>
+          </div>
+        </div>
+        <h3>Chapters</h3>
+        <div id="chapter-list" class="chapter-list"></div>
+        <h3>Preview a voice</h3>
+        <div class="preview-row">
+          <input id="preview-text" placeholder="Type a sentence to audition">
+          <button id="btn-preview" class="secondary">Preview</button>
+        </div>
+        <audio id="preview-audio" controls hidden></audio>
+      </div>
+    </section>
+  </main>
+
+  <script src="./lib/jszip.min.js"></script>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

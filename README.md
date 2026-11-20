@@ -233,6 +233,22 @@ Projects live under `./projects/` by default; override with
 `AUDIOBOOK_PORT`. The UI is plain HTML/CSS/JS with no build step, served from
 `webapi/static/`.
 
+## Browser app (fully client-side)
+
+`webapp/` is a static, server-free build: the tiny-voca GGUF engine and the
+dizione phonemizer run in a Web Worker, and projects/audio live in IndexedDB.
+Nothing is uploaded and no Python process is needed at runtime. The first load
+downloads an 8 MB model, after which the page works offline.
+
+```bash
+cd webapp
+python3 -m http.server 8000   # open http://localhost:8000
+```
+
+It supports TXT/MD/EPUB import, resumable chapter synthesis with pause/resume/
+stop, and WAV assembly. `.github/workflows/pages.yml` deploys it to GitHub
+Pages. See [webapp/README.md](webapp/README.md) for details and limitations.
+
 ## Service layer
 
 `service.py` holds the application logic as plain functions that take paths
