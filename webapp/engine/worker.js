@@ -4,7 +4,7 @@
 
 import { readGGUF, TinyVoca } from "./tiny-voca.js";
 import { fromGGUF } from "./dizione/engine.js";
-import { utterancesOf, limited } from "./text.js";
+import { utterancesOf, limited, wav } from "./text.js";
 
 const MODEL_URL = new URL("../assets/tiny-voca-js.gguf", import.meta.url);
 const CACHE_NAME = "kiku-engine-v1";
@@ -15,6 +15,7 @@ let sampleRate = 24000;
 let maxTokens = 0;
 let control = null;
 let currentJobId = null;
+let loadPromise = null;
 
 class Stopped extends Error {}
 
@@ -25,6 +26,13 @@ function freshControl() {
 function post(message, transfers = []) {
   postMessage(message, transfers);
 }
+
+self.addEventListener("error", (event) => {
+  post({ type: "error", id: currentJobId, message: String(event.message || event.error || "worker error") });
+});
+self.addEventListener("unhandledrejection", (event) => {
+  post({ type: "error", id: currentJobId, message: String((event.reason && event.reason.message) || event.reason || "worker error") });
+});
 
 function status(text, progress = null) {
   post({ type: "status", text, progress });
@@ -84,15 +92,30 @@ async function fetchModel() {
 
 async function load() {
   if (voca) return;
+  if (!loadPromise) {
+    loadPromise = doLoad().finally(() => { loadPromise = null; });
+  }
+  return loadPromise;
+}
+
+async function doLoad() {
   status("Starting the phonemizer and model…");
   const buffer = await fetchModel();
   const file = readGGUF(buffer);
-  voca = new TinyVoca(file);
-  phonemizer = await fromGGUF(file);
+  const nextVoca = new TinyVoca(file);
+  const nextPhonemizer = await fromGGUF(file);
+  voca = nextVoca;
+  phonemizer = nextPhonemizer;
   sampleRate = voca.config.sample_rate;
   maxTokens = voca.config.max_tokens;
   status("Ready.");
-  post({ type: "ready", sampleRate, voices: voca.voices });
+  try {
+    post({ type: "ready", sampleRate, voices: voca.voices });
+  } catch (error) {
+    voca = null;
+    phonemizer = null;
+    throw error;
+  }
 }
 
 function voiceSettings(settings) {
@@ -189,7 +212,9 @@ onmessage = async ({ data }) => {
       if (!voca) await load();
       const result = await synthesizeText(data.text, data.settings);
       if (!result) throw new Error("nothing to pronounce in that text");
-      post({ type: "preview", id: data.id, audio: result.audio, sampleRate }, [result.audio]);
+      const pcm = new Float32Array(result.audio);
+      const wavBytes = wav(pcm, sampleRate);
+      post({ type: "preview", id: data.id, audio: wavBytes, sampleRate }, [wavBytes]);
     } else if (data.type === "pause" && control) {
       control.paused = true;
       post({ type: "jobState", id: currentJobId, state: "paused" });
@@ -203,6 +228,9 @@ onmessage = async ({ data }) => {
       release(control);
     }
   } catch (error) {
-    post({ type: "error", id: data.id, message: String(error && error.message || error) });
+    const errorId = data.type === "synthesize" || data.type === "preview"
+      ? (data.id || currentJobId || undefined)
+      : data.id;
+    post({ type: "error", id: errorId, message: String(error && error.message || error) });
   }
 };

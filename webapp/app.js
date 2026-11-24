@@ -5,7 +5,7 @@ import { defaultSettings, normalizeSettings, describePlan } from "./lib/settings
 import { readSource, splitChapters } from "./lib/book.js";
 import { groupChapters, outputPlans, buildOutputBlob } from "./lib/assemble.js";
 import * as store from "./lib/store.js";
-import { engineReady, runJob, preview, jobControl, onEngineStatus } from "./lib/synth.js";
+import { engineReady, runJob, preview, jobControl, onEngineStatus, onEngineError } from "./lib/synth.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -18,6 +18,8 @@ const state = {
   jobState: null,
   outputUrls: [],
 };
+
+let restoreToken = 0;
 
 function banner(message, kind = "info") {
   const el = $("banner");
@@ -35,6 +37,8 @@ onEngineStatus((text, progress) => {
   $("engine-label").textContent = text;
   $("engine-bar").style.width = progress == null ? "0%" : `${Math.round(progress * 100)}%`;
 });
+
+onEngineError((error) => banner(error.message, "error"));
 
 function renderProjects() {
   const list = $("project-list");
@@ -161,6 +165,7 @@ async function refreshProjects() {
 }
 
 async function selectProject(id) {
+  restoreToken += 1;
   jobControl.stop();
   state.jobId = null;
   setJobState(null);
@@ -306,26 +311,26 @@ $("settings-form").onsubmit = async (event) => {
 };
 
 $("btn-synthesize").onclick = async () => {
-  if (!state.project) return;
-  const settings = state.project.settings;
-  const from = numberOrBlank("syn-from");
-  const to = numberOrBlank("syn-to");
-  const count = numberOrBlank("syn-count");
-  const force = $("chk-force").checked;
-  let chapters = state.chapters.filter((chapter) => {
-    if (from !== null && chapter.number < from) return false;
-    if (to !== null && chapter.number > to) return false;
-    return true;
-  });
-  if (count !== null) chapters = chapters.slice(0, count);
-  const targets = chapters.filter((chapter) => force || chapter.status !== "done");
-  if (!targets.length) { banner("Nothing to synthesize."); return; }
-
-  const id = `job-${Date.now().toString(36)}`;
-  state.jobId = id;
-  setJobState("running");
-  $("progress-wrap").hidden = false;
   try {
+    if (!state.project) throw new Error("Select a project first.");
+    const settings = state.project.settings;
+    const from = numberOrBlank("syn-from");
+    const to = numberOrBlank("syn-to");
+    const count = numberOrBlank("syn-count");
+    const force = $("chk-force").checked;
+    let chapters = state.chapters.filter((chapter) => {
+      if (from !== null && chapter.number < from) return false;
+      if (to !== null && chapter.number > to) return false;
+      return true;
+    });
+    if (count !== null) chapters = chapters.slice(0, count);
+    const targets = chapters.filter((chapter) => force || chapter.status !== "done");
+    if (!targets.length) { banner("Nothing to synthesize."); return; }
+
+    const id = `job-${Date.now().toString(36)}`;
+    state.jobId = id;
+    setJobState("running");
+    $("progress-wrap").hidden = false;
     const result = await runJob({
       id,
       chapters: targets.map((chapter) => ({ number: chapter.number, text: chapter.text })),
@@ -396,5 +401,14 @@ $("btn-preview").onclick = async () => {
   }
 };
 
-refreshProjects().catch((error) => banner(error.message, "error"));
+refreshProjects()
+  .then(async () => {
+    const token = ++restoreToken;
+    const lastId = await store.getMeta("lastProjectId");
+    if (token !== restoreToken || state.project) return;
+    if (lastId && state.projects.some((project) => project.id === lastId)) {
+      await selectProject(lastId);
+    }
+  })
+  .catch((error) => banner(error.message, "error"));
 engineReady().catch((error) => banner(error.message, "error"));

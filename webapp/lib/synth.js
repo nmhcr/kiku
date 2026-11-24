@@ -4,13 +4,30 @@ const worker = new Worker(new URL("../engine/worker.js", import.meta.url), { typ
 
 let readyPromise = null;
 let statusHandler = () => {};
+let errorHandler = () => {};
+let engineLoaded = false;
 
 export function onEngineStatus(handler) {
   statusHandler = handler;
 }
 
+export function onEngineError(handler) {
+  errorHandler = handler;
+}
+
 worker.addEventListener("message", ({ data }) => {
+  if (data.type === "error" && data.id == null && engineLoaded) {
+    errorHandler(new Error(data.message));
+    return;
+  }
   if (data.type === "status") statusHandler(data.text, data.progress);
+});
+
+worker.addEventListener("error", (event) => {
+  errorHandler(new Error(event.message || "worker error"));
+});
+worker.addEventListener("messageerror", () => {
+  errorHandler(new Error("worker message could not be deserialized"));
 });
 
 export function engineReady() {
@@ -18,9 +35,11 @@ export function engineReady() {
     readyPromise = new Promise((resolve, reject) => {
       const onMessage = ({ data }) => {
         if (data.type === "ready") {
+          engineLoaded = true;
           worker.removeEventListener("message", onMessage);
           resolve(data);
         } else if (data.type === "error") {
+          engineLoaded = false;
           worker.removeEventListener("message", onMessage);
           readyPromise = null;
           reject(new Error(data.message));
@@ -73,7 +92,7 @@ export function runJob({ id, chapters, settings, onProgress, onChapterAudio, onS
 }
 
 export function preview(text, settings) {
-  const id = `preview-${Date.now()}`;
+  const id = `preview-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   return engineReady().then(() => new Promise((resolve, reject) => {
     const onMessage = ({ data }) => {
       if (data.id !== id) return;
